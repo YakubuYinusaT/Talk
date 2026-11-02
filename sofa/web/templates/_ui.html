@@ -31,6 +31,13 @@
   {%- elif name == "sun" %}<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>
   {%- elif name == "moon" %}<path d="M20 14.5A8 8 0 019.5 4 8 8 0 1020 14.5z"/>
   {%- elif name == "plus" %}<path d="M12 5v14M5 12h14"/>
+  {%- elif name == "grid" %}<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>
+  {%- elif name == "calendar" %}<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>
+  {%- elif name == "inbox" %}<path d="M4 13l2.5-7h11L20 13v6H4z"/><path d="M4 13h4.5l1.5 2.5h4l1.5-2.5H20"/>
+  {%- elif name == "pill" %}<rect x="3.5" y="8.5" width="17" height="7" rx="3.5" transform="rotate(-35 12 12)"/><path d="M9.5 8.5l5 7"/>
+  {%- elif name == "book" %}<path d="M5 4.5h10a3 3 0 013 3V20H8a3 3 0 01-3-3z"/><path d="M5 17a3 3 0 013-3h10"/>
+  {%- elif name == "pulse" %}<path d="M3 12h4l2.5-6 4 12 2.5-6H21"/>
+  {%- elif name == "pin" %}<path d="M12 21s-6.5-6-6.5-11a6.5 6.5 0 0113 0c0 5-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/>
   {%- endif %}
 </svg>
 {%- endmacro %}

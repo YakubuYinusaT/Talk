@@ -27,7 +27,7 @@
 </head>
 <body class="{% block body_class %}{% endblock %}">
 <a class="skip-link" href="#main">Skip to content</a>
-{% if not embedded %}
+{% if not embedded and not app_shell %}
 <header class="site-header">
   <div class="page header-inner">
     <a class="brand" href="{{ home_url }}" aria-label="Talk, home"><img src="/static/ci-mark-red.png" width="48" height="24" alt=""><span>Talk</span></a>
@@ -45,7 +45,7 @@
   {% block hero %}{% endblock %}
   {% block main %}<div class="page">{% block body %}{% endblock %}</div>{% endblock %}
 </main>
-{% if not embedded %}
+{% if not embedded and not app_shell %}
 <footer class="site-footer">
   <div class="page footer-inner">
     <p>Talk by Connected Intelligence</p>

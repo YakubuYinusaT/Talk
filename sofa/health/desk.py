@@ -118,6 +118,32 @@ def holds_of(store: HospitalStore, now: datetime) -> tuple[list[dict], list[dict
     return held, rooms
 
 
+def activity_of(store: HospitalStore, now: datetime, limit: int = 30) -> list[dict]:
+    """What happened at this provider, newest first: visits Talk booked, requests from callers, replies from the staff and emergency places held. Each entry is a
+    short cue, a detail and a reference, never a phone number. Sample visits made for a demonstration are left out."""
+    found = []
+    for r in store.db.execute("SELECT code, facility_id, starts, visit, status, created, caller_ref FROM appointments ORDER BY created DESC LIMIT 60").fetchall():
+        if r["caller_ref"].startswith("sample-"):
+            continue
+        f, starts = store.by_id.get(r["facility_id"]), datetime.fromisoformat(r["starts"])
+        found.append((datetime.fromisoformat(r["created"]), {"cue": "Visit booked", "icon": "calendar", "tone": "accent", "code": r["code"],
+                      "detail": f"{r['visit'].capitalize()} · {f.name if f else r['facility_id']} · {day_label(starts.date(), now.date())} {starts:%H:%M}",
+                      "status": STATUS.get(r["status"], r["status"])}))
+    for r in store.db.execute("SELECT code, kind, urgent, created, replied FROM requests ORDER BY created DESC LIMIT 60").fetchall():
+        label, icon = KINDS.get(r["kind"], (r["kind"].capitalize(), "question"))
+        urgent = r["kind"] == "emergency" or bool(r["urgent"])
+        found.append((datetime.fromisoformat(r["created"]), {"cue": "Emergency reported" if r["kind"] == "emergency" else "Request received", "icon": icon,
+                      "tone": "danger" if urgent else "neutral", "code": r["code"], "detail": label, "status": ""}))
+        if r["replied"]:
+            found.append((datetime.fromisoformat(r["replied"]), {"cue": "Reply sent", "icon": "check", "tone": "success", "code": r["code"], "detail": label, "status": ""}))
+    for h in store.db.execute("SELECT code, facility_id, created, expires FROM emergency_holds ORDER BY created DESC LIMIT 30").fetchall():
+        f, until = store.by_id.get(h["facility_id"]), datetime.fromisoformat(h["expires"])
+        found.append((datetime.fromisoformat(h["created"]), {"cue": "Emergency place held", "icon": "siren", "tone": "danger", "code": h["code"],
+                      "detail": f"{f.name if f else h['facility_id']} · until {until:%H:%M}", "status": ""}))
+    found.sort(key=lambda pair: pair[0], reverse=True)
+    return [{**entry, "age": age_words(at, now), "time": f"{at:%H:%M}"} for at, entry in found[:limit]]
+
+
 def stock_of(store: HospitalStore) -> dict | None:
     """What each pharmacy holds of each medicine, for a provider that has pharmacies. The numbers are made up but steady (data.stock_level)."""
     pharmacies = [f for f in store.facilities if f.kind == "pharmacy"]
@@ -143,6 +169,9 @@ def build(network: data.Network, store: HospitalStore, desk_key: str, key: str, 
     waiting, answered = requests_of(store, now)
     stock = stock_of(store)
     holds, rooms = holds_of(store, now)
+    activity = activity_of(store, now)
+    upcoming = [{**v, "day": g["label"]} for g in groups for v in g["visits"] if v["status"] in ("booked", "confirmed") and not v["passed"]][:5]
+    marking_due = [{**v, "day": g["label"]} for g in groups for v in g["visits"] if v["passed"]][:5]
     urgent = sum(1 for r in waiting if r["urgent"])
     people = sum(p["people"] for p in places if p["open"])
     if stock:
@@ -164,7 +193,8 @@ def build(network: data.Network, store: HospitalStore, desk_key: str, key: str, 
             "access": access, "marking": marking, "key": key if marking else "", "tiles": tiles, "places": places,
             "groups": groups, "bookable": any(p["bookable"] for p in places), "waiting": waiting, "answered": answered, "urgent": urgent, "stock": stock, "guide": guide,
             "book_places": sorted({(v["place_id"], v["place"]) for g in groups for v in g["visits"]}, key=lambda pair: pair[1]),
-            "demo": network.demo, "assistant": None, "embedded": False, "holds": holds, "rooms": rooms, **(extras or {})}
+            "demo": network.demo, "assistant": None, "embedded": False, "holds": holds, "rooms": rooms, "activity": activity, "upcoming": upcoming,
+            "marking_due": marking_due, "today_total": today_total, "app_shell": True, **(extras or {})}
 
 
 def render(network: data.Network, store: HospitalStore, desk_key: str, key: str, staff: bool = False, extras: dict | None = None) -> str:

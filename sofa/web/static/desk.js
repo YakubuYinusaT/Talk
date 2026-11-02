@@ -10,6 +10,41 @@
   var updated = document.getElementById("updated");
   var timer = null;
   var busy = false;
+  var active = "overview";
+
+  /* One section at a time. The address names the section (or something inside one, such as a request), so a link, the Back button and a reload all land in
+     the right place. Without this script every section is shown, one under the other. */
+  function sectionOf(id) {
+    var el = id && document.getElementById(id);
+    var panel = el && live.contains(el) ? (el.hasAttribute("data-panel") ? el : el.closest("[data-panel]")) : null;
+    return panel ? panel.id : "overview";
+  }
+
+  function show(id, focusTarget) {
+    active = id;
+    Array.prototype.forEach.call(live.querySelectorAll("[data-panel]"), function (p) { p.hidden = p.id !== id; });
+    Array.prototype.forEach.call(document.querySelectorAll("#desk-nav a[data-panel]"), function (a) {
+      a.setAttribute("aria-current", a.getAttribute("data-panel") === id ? "true" : "false");
+    });
+    var crumb = document.getElementById("crumb");
+    var label = document.querySelector('#desk-nav a[data-panel="' + id + '"] span');
+    if (crumb) crumb.textContent = label ? label.textContent : "";
+    if (focusTarget) {
+      focusTarget.setAttribute("tabindex", "-1");
+      focusTarget.focus({ preventScroll: true });
+      focusTarget.scrollIntoView({ block: "start" });
+    }
+  }
+
+  function follow() {
+    var id = decodeURIComponent((location.hash || "").slice(1));
+    var section = sectionOf(id);
+    var target = id && id !== section ? document.getElementById(id) : null;
+    show(section, target);
+    if (!target) window.scrollTo(0, 0);
+  }
+  window.addEventListener("hashchange", follow);
+  follow();
 
   function toast(text, tone) {
     if (window.toast) window.toast(text, tone || "info");
@@ -62,12 +97,21 @@
   function swap(text) {
     var fresh = new DOMParser().parseFromString(text, "text/html").getElementById("desk-live");
     if (!fresh) return false;
+    var doc = fresh.ownerDocument;
+    var menu = document.getElementById("desk-nav");
+    var freshMenu = doc.getElementById("desk-nav");
+    if (menu && freshMenu && menu.innerHTML !== freshMenu.innerHTML) {   // the counts in the menu follow the page
+      menu.innerHTML = freshMenu.innerHTML;
+    }
     if (fresh.innerHTML !== live.innerHTML) {
       var before = urgent(live);
       var state = save();
       live.innerHTML = fresh.innerHTML;
+      show(active);
       restore(state);
       if (urgent(live) > before) toast("A new urgent request has arrived.", "danger");
+    } else {
+      show(active);
     }
     return true;
   }

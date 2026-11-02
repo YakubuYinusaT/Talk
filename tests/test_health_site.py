@@ -54,12 +54,13 @@ def test_each_front_desk_is_reached_from_the_providers_page(site):
         assert f'href="/synthetic/{slug}/"' in page and site.get(f"/synthetic/{slug}/").status_code == 200
 
 
-def test_a_front_desk_sits_in_the_shared_shell_and_belongs_to_the_providers_menu_item(site):
+def test_a_front_desk_is_its_own_app_with_a_menu_of_sections_and_a_way_back_to_talk(site):
     for slug in SLUGS:
         page = site.get(f"/synthetic/{slug}/").text
-        assert page.count("<h1") == 1 and 'class="site-header"' in page and 'class="site-footer"' in page, slug
-        nav = re.search(r'<nav class="nav".*?</nav>', page, re.S).group(0)
-        assert 'aria-current="page">Providers</a>' in nav, slug
+        assert page.count("<h1") == 1 and 'class="app-side"' in page and 'class="site-header"' not in page, slug      # the hospital's own system, not a page of the site
+        menu = re.search(r'<nav class="app-nav" id="desk-nav".*?</nav>', page, re.S).group(0)
+        assert 'href="#overview"' in menu and 'href="#requests"' in menu and 'href="#activity"' in menu and 'href="#places"' in menu, slug
+        assert '<a class="app-brand" href="/"' in page and "Simulated demonstration" in page, slug
 
 
 def test_every_front_desk_shows_the_queue_place_by_place_and_the_requests_for_the_care_team(site):
