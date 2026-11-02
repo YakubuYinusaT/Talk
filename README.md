@@ -122,7 +122,7 @@ A trip is worked out inside Talk, with no network call and no model. The road di
 
 A streamed call, handled in `sofa/sip`, hears the caller as they speak, replies one sentence at a time as soon as each is ready, and stops speaking when the caller interrupts. It shares its turn logic with the callback path.
 
-The voice is a hosted Nigerian-accent English voice. Talk also has a voice that runs on the server itself, which is set with `PIPER_MODEL`, and it speaks whenever the hosted voice cannot be reached. A call from the browser plays the same voice.
+The voice is a hosted Nigerian English voice: Spitch, or one of Microsoft Azure's two Nigerian English voices with `TTS_PROVIDER=azure`, which sends each reply as one request and keeps under the 20 requests a minute of Azure's free tier. Talk also has a voice that runs on the server itself, which is set with `PIPER_MODEL`, and it speaks whenever the hosted voice cannot be reached. A call from the browser plays the same voice.
 
 ## What we learned about Meta's models
 

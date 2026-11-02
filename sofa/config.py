@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     tts_hosted_speed: float = 0.95
     spitch_api_key: str = ""
     spitch_voice_en: str = "jude"
+    # Microsoft Azure Speech (TTS_PROVIDER=azure): the key and the region of a Speech resource, and one of its Nigerian English voices,
+    # en-NG-EzinneNeural (female) or en-NG-AbeoNeural (male). The free tier allows 20 requests a minute, and Talk keeps under it.
+    azure_speech_key: str = ""
+    azure_speech_region: str = ""
+    azure_voice: str = "en-NG-EzinneNeural"
     piper_model: str = ""  # path to a Piper voice (.onnx); empty = none
     piper_speed: float = 1.0
 

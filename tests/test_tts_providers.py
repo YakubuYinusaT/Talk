@@ -395,7 +395,7 @@ def test_with_no_key_and_no_local_voice_the_silent_stand_in_is_used_so_a_fresh_c
 
 def test_an_unknown_voice_provider_is_refused_with_the_choices_named():
     for name in ("nonsense", "robot"):
-        with pytest.raises(ValueError, match="spitch, piper or standin"):
+        with pytest.raises(ValueError, match="spitch, azure, piper or standin"):
             build_tts(Settings(_env_file=None, tts_provider=name))
 
 
@@ -486,4 +486,58 @@ async def test_audio_from_the_standin_voice_is_kept_for_minutes_not_for_good(tmp
 
 def test_only_the_voices_that_are_in_use_exist():
     voices = {name for name in dir(tts_module) if name.endswith("TTS")}
-    assert voices == {"PiperTTS", "RoutedTTS", "SpitchTTS", "StandInTTS"}
+    assert voices == {"AzureTTS", "PiperTTS", "RoutedTTS", "SpitchTTS", "StandInTTS"}
+
+
+
+# ---- Microsoft Azure Speech, with its Nigerian English voices --------------------------------------------------------------
+
+
+def _azure(seen, status=200, voice="en-NG-EzinneNeural", speed=1.0):
+    from sofa.clients.tts import AzureTTS
+
+    v = AzureTTS("azure-key", "northeurope", voice, speed)
+    v.http = httpx.AsyncClient(transport=_transport(seen, status), headers=dict(v.http.headers))
+    return v
+
+
+@pytest.mark.anyio
+async def test_azure_is_asked_for_the_nigerian_voice_in_one_request_with_the_text_escaped():
+    seen = []
+    voice = _azure(seen, speed=0.95)
+    out = await voice.synthesize("Your fee is 500 naira & the clinic is <open>.", "en")
+    [request] = seen
+    assert str(request.url) == "https://northeurope.tts.speech.microsoft.com/cognitiveservices/v1"
+    assert request.headers["Ocp-Apim-Subscription-Key"] == "azure-key" and request.headers["X-Microsoft-OutputFormat"] == "riff-16khz-16bit-mono-pcm"
+    body = request.content.decode()
+    assert "<voice name='en-NG-EzinneNeural'>" in body.replace('"', "'") and "rate='-5%'" in body and "&amp; the clinic is &lt;open&gt;" in body
+    assert out[:4] == b"RIFF" and voice.tag == "azure-en-NG-EzinneNeural-0.95"
+
+
+@pytest.mark.anyio
+async def test_a_reply_goes_to_azure_whole_and_not_a_sentence_at_a_time():
+    seen = []
+    routed = RoutedTTS(_azure(seen), _Voice("standin"))
+    await routed.synthesize("Your appointment is booked. Please arrive early. Is there anything else?", "en")
+    assert len(seen) == 1       # the free tier counts requests, so one reply is one request
+
+
+@pytest.mark.anyio
+async def test_past_the_free_limit_a_minute_the_reply_is_spoken_at_once_by_the_voice_on_this_machine():
+    from sofa.clients.tts import AzureTTS
+
+    seen = []
+    azure = _azure(seen)
+    routed = RoutedTTS(azure, _Voice("standin"), local=_Voice("local"))
+    for _ in range(AzureTTS.PER_MINUTE):
+        await routed.synthesize("Hello there.", "en")
+    out = await routed.synthesize("One more reply in the same minute.", "en")
+    assert len(seen) == AzureTTS.PER_MINUTE and isinstance(out, FallbackAudio) and out == _clip("local")
+
+
+def test_azure_is_chosen_with_its_key_and_region_and_the_voice_on_this_machine_without_them():
+    from sofa.clients.tts import AzureTTS
+
+    chosen = build_tts(Settings(_env_file=None, tts_provider="azure", azure_speech_key="k", azure_speech_region="northeurope", azure_voice="en-NG-AbeoNeural"))
+    assert isinstance(chosen, RoutedTTS) and isinstance(chosen.hosted, AzureTTS) and chosen.hosted.voice == "en-NG-AbeoNeural"
+    assert isinstance(build_tts(Settings(_env_file=None, tts_provider="azure", azure_speech_key="k")), StandInTTS)     # no region: nothing hosted, and no local voice here

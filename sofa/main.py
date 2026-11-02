@@ -19,6 +19,8 @@ def voice_in_use(settings: Settings) -> str:
     """The voice callers hear, in words, for /health."""
     if settings.tts_provider == "spitch" and settings.spitch_api_key:
         return "spitch, " + ("with a voice on this machine as back-up" if settings.piper_model else "no back-up voice")
+    if settings.tts_provider == "azure" and settings.azure_speech_key and settings.azure_speech_region:
+        return f"azure {settings.azure_voice}, " + ("with a voice on this machine as back-up" if settings.piper_model else "no back-up voice")
     if settings.tts_provider != "standin" and settings.piper_model:
         return "a voice on this machine"
     return "stand-in (silent)"

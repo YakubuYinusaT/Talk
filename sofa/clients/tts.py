@@ -71,6 +71,53 @@ class SpitchTTS:
         return _repair_wav(resp.content)
 
 
+class AzureBusy(Exception):
+    """The free tier's limit on voice requests in a minute is reached: the reply is spoken by the voice on this machine instead of waiting."""
+
+
+class AzureTTS:
+    """Microsoft Azure Speech, with its Nigerian English voices (en-NG-EzinneNeural and en-NG-AbeoNeural). Each reply is one request, because the free tier
+    allows only 20 requests a minute, and Talk keeps under that by counting its own requests: when one more would go over, it does not wait, so the reply
+    is spoken at once by the voice on this machine."""
+
+    whole = True            # the reply is voiced in one request, not a sentence at a time
+    PER_MINUTE = 18         # under the free tier's 20 requests a minute, with room to spare
+    min_interval = 60 / PER_MINUTE   # the pace at which the warm-up asks for one phrase after another
+
+    def __init__(self, key: str, region: str, voice: str = "en-NG-EzinneNeural", speed: float = 1.0):
+        from collections import deque
+
+        self.voice, self.speed = voice, min(1.2, max(0.7, speed))
+        self.tag = f"azure-{voice}-{self.speed}"
+        self.url = f"https://{region.strip().lower()}.tts.speech.microsoft.com/cognitiveservices/v1"
+        self.http = RetryingClient(timeout=20.0, headers={"Ocp-Apim-Subscription-Key": key, "Content-Type": "application/ssml+xml",
+                                                          "X-Microsoft-OutputFormat": "riff-16khz-16bit-mono-pcm", "User-Agent": "talk-health"})
+        self._sent = deque()
+
+    def ssml(self, text: str) -> str:
+        from xml.sax.saxutils import escape, quoteattr
+
+        rate = f"{round((self.speed - 1) * 100):+d}%"
+        return (f"<speak version='1.0' xml:lang='en-NG'><voice name={quoteattr(self.voice)}><prosody rate='{rate}'>{escape(str(text))}</prosody>"
+                f"</voice></speak>")
+
+    def _take_slot(self) -> None:
+        import time
+
+        now = time.monotonic()
+        while self._sent and now - self._sent[0] >= 60:
+            self._sent.popleft()
+        if len(self._sent) >= self.PER_MINUTE:
+            raise AzureBusy("the free tier's requests for this minute are used up")
+        self._sent.append(now)
+
+    async def synthesize(self, text: str, language: str) -> bytes:
+        self._take_slot()
+        resp = await self.http.post(self.url, content=self.ssml(text).encode("utf-8"))
+        resp.raise_for_status()
+        return _repair_wav(resp.content)
+
+
 class PiperTTS:
     """A voice that runs on this machine (Piper, open source): no account, no credit, no network. English only. It speaks when the hosted voice cannot, so a
     caller hears a real voice instead of silence; it is also quick on a plain CPU (a sentence in well under a second)."""
@@ -180,7 +227,7 @@ class RoutedTTS:
             return await self.default.synthesize(text, language)
         if time.monotonic() >= self.skip_until:
             try:
-                pieces = split_sentences(text) or [text]
+                pieces = [text] if getattr(self.hosted, "whole", False) else (split_sentences(text) or [text])   # Azure takes the whole reply at once
                 clips = await asyncio.gather(*(self.hosted.synthesize(piece, language) for piece in pieces))
                 return join_wavs(list(clips))
             except Exception as exc:  # out of credit, a network fault: a caller still hears a voice rather than a broken call
@@ -196,12 +243,12 @@ class RoutedTTS:
 
 
 def build_tts(settings):
-    """The hosted voice (Spitch) when its key is set, with a voice on this machine (Piper) as back-up; the voice on this machine alone when only it is set; the
+    """The hosted voice (Spitch or Azure) when its key is set, with a voice on this machine (Piper) as back-up; the voice on this machine alone when only it is set; the
     silent stand-in when neither is. Never a reason to fail at start-up: a fresh checkout runs with no keys."""
     standin = StandInTTS()
     provider = (settings.tts_provider or "spitch").strip().lower()
-    if provider not in ("spitch", "piper", "standin"):
-        raise ValueError(f"unknown TTS_PROVIDER {provider!r} (use spitch, piper or standin)")
+    if provider not in ("spitch", "azure", "piper", "standin"):
+        raise ValueError(f"unknown TTS_PROVIDER {provider!r} (use spitch, azure, piper or standin)")
     local = build_local_voice(settings) if provider != "standin" else None
     hosted = None
     if provider == "spitch":
@@ -209,6 +256,12 @@ def build_tts(settings):
             hosted = SpitchTTS(settings.spitch_api_key, settings.spitch_voice_en, settings.tts_hosted_speed)
         else:
             log.warning("TTS_PROVIDER=spitch but SPITCH_API_KEY is not set: %s", "using the voice on this machine" if local else "using the silent stand-in voice")
+    if provider == "azure":
+        if settings.azure_speech_key and settings.azure_speech_region:
+            hosted = AzureTTS(settings.azure_speech_key, settings.azure_speech_region, settings.azure_voice, settings.tts_hosted_speed)
+        else:
+            log.warning("TTS_PROVIDER=azure but AZURE_SPEECH_KEY or AZURE_SPEECH_REGION is not set: %s",
+                        "using the voice on this machine" if local else "using the silent stand-in voice")
     if hosted is None and local is None:
         return standin
     return RoutedTTS(hosted, standin, local=local)

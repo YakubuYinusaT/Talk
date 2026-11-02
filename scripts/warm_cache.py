@@ -39,7 +39,8 @@ async def main() -> None:
     svc = build_services(settings, make_session_factory(make_engine(settings.database_url)))
     made = failed = 0
     for text in templates.fixed_phrases().values():
-        ok = await speak_properly(svc.audio, text, templates.LANG)
+        pace = max(PACE_SECONDS, getattr(getattr(getattr(svc.audio, "tts", None), "hosted", None), "min_interval", 0))   # a hosted voice with a limit a minute is asked no faster than it allows
+        ok = await speak_properly(svc.audio, text, templates.LANG, pace=pace)
         made, failed = made + ok, failed + (not ok)
     note = f"; {failed} could not be made with the real voice and will be made when a call first needs them" if failed else ""
     print(f"Cached {made} fixed phrases{note}.")

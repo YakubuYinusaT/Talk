@@ -20,6 +20,8 @@ DEFAULT_TEXT = "Hello, this is a test of the voice."
 
 async def run(text: str) -> int:
     settings = get_settings()
+    if settings.tts_provider == "azure":
+        return await run_azure(settings, text)
     key = settings.spitch_api_key
     print(f"voice provider: {settings.tts_provider}, English voice: {settings.spitch_voice_en}, speed {settings.tts_hosted_speed}, key {'set' if key else 'NOT SET'}")
     if not key:
@@ -43,6 +45,29 @@ async def run(text: str) -> int:
             await asyncio.sleep(2)
     print("The hosted voice did not answer well. Talk would speak with the voice on this machine, or the silent stand-in, until it does.")
     return 1
+
+
+async def run_azure(settings, text: str) -> int:
+    """The same check for Microsoft Azure Speech: one sentence in the chosen Nigerian English voice."""
+    from sofa.clients.tts import AzureTTS
+
+    key, region = settings.azure_speech_key, settings.azure_speech_region
+    print(f"voice provider: azure, voice: {settings.azure_voice}, region: {region or 'NOT SET'}, key {'set' if key else 'NOT SET'}")
+    if not (key and region):
+        print("Put AZURE_SPEECH_KEY and AZURE_SPEECH_REGION in the .env file and run this again.")
+        return 1
+    voice = AzureTTS(key, region, settings.azure_voice, settings.tts_hosted_speed)
+    try:
+        audio = await voice.synthesize(text, "en")
+    except httpx.HTTPStatusError as exc:
+        print(f"HTTP {exc.response.status_code} | {exc.response.text[:300].replace(key, '***')}")
+        print("Azure refused. A 401 means the key or the region is wrong; the key only works in the region where the resource was made.")
+        return 1
+    except httpx.HTTPError as exc:
+        print(f"Azure could not be reached ({type(exc).__name__}).")
+        return 1
+    print(f"HTTP 200, {len(audio)} bytes of audio. The Azure voice is working.")
+    return 0
 
 
 def parser() -> argparse.ArgumentParser:
