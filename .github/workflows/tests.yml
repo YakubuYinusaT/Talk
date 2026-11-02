@@ -1,0 +1,25 @@
+# Runs every test on each push and pull request. The tests use stand-in models and simulated providers, so they need no key, no network and no secret.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install Talk and the test runner
+        run: pip install -e ".[dev]"
+      - name: Run every test
+        run: python -m pytest -q -p no:cacheprovider

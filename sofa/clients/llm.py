@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 
@@ -33,6 +34,11 @@ def strict_schema(schema):
 EXTRACT_MAX_TOKENS = 400  # the front desk's understanding and wording answers
 
 
+REPAIR_SECONDS = 4.0  # the longest a caller waits for the second try at an answer that did not fit the format
+# What an answer that is not shaped as asked looks like: no content at all (None), no choices, a list where text should be, text that is not JSON, or JSON
+# that does not fit the model class.
+SHAPE_ERRORS = (ValidationError, json.JSONDecodeError, KeyError, IndexError, TypeError, AttributeError)
+
 META_REASONING_ROOM = 800  # on Meta's models the thinking tokens count against max_tokens: the cap leaves room for them, and only what is used is billed
 
 
@@ -47,6 +53,7 @@ class LLMClient:
         self.model = model
         self.meta = provider == "meta"
         self.reasoning_effort = reasoning_effort
+        self.stats = {"answers": 0, "rejected": 0, "repaired": 0, "failed": 0}   # shown on /health, so a rising rate of bad answers is seen
 
     def schema_format(self, name: str, schema: dict) -> dict:
         """The answer-format option for a JSON schema, in the shape the hosted API accepts."""
@@ -68,15 +75,30 @@ class LLMClient:
         return resp.json()["choices"][0]["message"]["content"]
 
     async def extract(self, model, system: str, transcript: str, alternatives: list[str] | None = None, json_schema: dict | None = None):
-        """Guided JSON for any small pydantic model. Returns (model instance, raw json); a bad answer is an empty instance."""
+        """Guided JSON for any small pydantic model. Returns (model instance, raw json). An answer that does not fit the format is asked for once more, saying
+        why, and if the second answer does not fit either, or is slow, the result is an empty instance and the rules carry on."""
+        constraint = self.schema_format("params", json_schema or model.model_json_schema())
+        user = f"TRANSCRIPT: {transcript}"
+        if alternatives:  # another reading of the same audio
+            user += "\nALSO HEARD (same audio, read another way): " + " | ".join(alternatives)
+        self.stats["answers"] += 1
         try:
-            constraint = self.schema_format("params", json_schema or model.model_json_schema())
-            user = f"TRANSCRIPT: {transcript}"
-            if alternatives:  # another reading of the same audio
-                user += "\nALSO HEARD (same audio, read another way): " + " | ".join(alternatives)
-            raw = json.loads(await self._chat(system, user, max_tokens=EXTRACT_MAX_TOKENS, **constraint))
-            return model.model_validate(raw), raw
-        except (ValidationError, json.JSONDecodeError, KeyError, IndexError, TypeError, AttributeError) as exc:
-            # Any answer that is not shaped as asked is an empty reading: no content at all (None), no choices, a list where text should be, or text that is not JSON.
-            log.warning("extraction rejected: %s", exc)
-            return model(), {"error": str(exc)}
+            return self._read(model, await self._chat(system, user, max_tokens=EXTRACT_MAX_TOKENS, **constraint))
+        except SHAPE_ERRORS as exc:
+            first = exc
+        self.stats["rejected"] += 1
+        log.warning("extraction rejected, asking once more: %s", first)
+        again = (f"{system}\nYOUR LAST ANSWER COULD NOT BE USED ({str(first)[:160]}). Answer again with JSON only, exactly in the format asked, with every field present.")
+        try:
+            got = self._read(model, await asyncio.wait_for(self._chat(again, user, max_tokens=EXTRACT_MAX_TOKENS, **constraint), timeout=REPAIR_SECONDS))
+        except (asyncio.TimeoutError, Exception) as exc:     # a second bad answer, a slow one or a failed request: the rules carry on, and the call goes on
+            self.stats["failed"] += 1
+            log.warning("extraction failed after a second try: %s", type(exc).__name__)
+            return model(), {"error": str(first)}
+        self.stats["repaired"] += 1
+        return got
+
+    @staticmethod
+    def _read(model, content):
+        raw = json.loads(content)
+        return model.model_validate(raw), raw

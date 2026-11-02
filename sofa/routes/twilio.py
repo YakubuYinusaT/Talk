@@ -24,7 +24,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
-from .. import twiml
+from .. import hardening, twiml
 from ..textutil import e164
 from . import voice
 
@@ -44,7 +44,7 @@ async def checked_form(request: Request, secret: str) -> dict:
     """The form Twilio sent, after the secret in the address and, when a token is set, Twilio's signature have been checked. Anything else is a 404, so a
     stranger learns nothing about the address."""
     svc = request.app.state.svc
-    if not hmac.compare_digest(secret, svc.settings.at_callback_secret):
+    if not hardening.callback_allowed(request, secret):
         raise HTTPException(status_code=404)
     form = {k: str(v) for k, v in (await request.form()).items()}
     token = svc.settings.twilio_auth_token

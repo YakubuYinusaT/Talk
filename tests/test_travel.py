@@ -65,6 +65,7 @@ def test_the_caller_saying_where_they_are_is_their_location():
 def test_an_area_inside_a_request_or_a_place_name_is_not_where_the_caller_is():
     assert gazetteer.caller_location("Please find me a clinic in Yaba.") is None
     assert gazetteer.caller_location("I would like to book at Ikeja Allen Medical Centre.") is None
+    assert gazetteer.caller_location("I am not bleeding, I just want a check-up in Surulere, please.") is None     # "I am" is not about the place
 
 
 # ---- in a conversation ---------------------------------------------------------------------------------------------

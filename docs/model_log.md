@@ -2,7 +2,7 @@
 
 This log records each problem that we met with the Meta models and with the live and test calls of the health build. Every entry says what went wrong, what we changed and what the change did, and it says plainly when an effect has not been confirmed on a real phone line yet.
 
-Muse Spark 1.3 reads each request, Muse Voice Transcribe hears the caller, and a hosted voice speaks. The first eight entries were measured on the first live and test calls of 28 October. The last three entries record what we learned about the strict JSON answer format and the wording of replies while the front desk was being built.
+Muse Spark 1.3 reads each request, Muse Voice Transcribe hears the caller, and a hosted voice speaks. The first eight entries were measured on the first live and test calls of 28 October. Entries 9 to 11 record what we learned about the strict JSON answer format and the wording of replies while the front desk was being built, and entries 12 to 15 record the work of 1 and 2 November on emergencies, answers and speed.
 
 ## Entry 1. Muse Voice Transcribe returned nothing, and refused a long keyword
 
@@ -92,7 +92,38 @@ Every sentence of the health front desk is now spoken exactly from its stored ph
 
 A caller always hears the provider's real facts, and when the model is slow or wrong, the caller hears the stored wording instead.
 
+## Entry 12. Emergencies were found by a closed list of English phrases
+
+Emergencies were found by a closed list of 17 English phrases, with no model. On a set of 85 sentences that callers might say, it sent only 10 of 54 true emergencies to 112 as emergencies, and it raised a false alarm on 8 of 24 sentences with no danger, such as "I accidentally missed my appointment".
+
+Muse Spark now reads urgency on every turn, by meaning, as the first field of the one reading it already makes, so it adds no model call. A keyword floor runs first with no model, allows for the recogniser's spelling, stays quiet on negations and on things that are over, and can only raise the model's level.
+
+The floor alone now sends 39 of the 54 true emergencies to 112 as emergencies, with no false alarm on the same 85 sentences. On the live service on 2 November, Muse Spark alone recognised "Something bit my leg in the bush and it is swelling up very fast" as an emergency, which no keyword covers. It read "My chest has been feeling tight since this morning" as a possible emergency, so Talk asked one question, and it read "I am not bleeding, I just want a check-up" as no danger.
+
+## Entry 13. A simple answer that the rules could not read was asked for again
+
+Asked which day and time a caller would like, the caller answered "When is the next available slot?", and Talk said that it did not catch the day and time. The rules read days and times, and nothing read what the caller meant.
+
+When the rules cannot read an answer, Muse Spark now reads it with Talk's question in view and says what the caller meant: the thing that was asked, the earliest free time, a yes, a no, or something else. A day, a time or an area it gives counts only if it is made of the caller's own words.
+
+On the live service on 2 November, the same sentence was understood, and Talk offered the earliest time that the caller could reach from their area, with when to leave.
+
+## Entry 14. How long one reading takes on the live service
+
+On the live service on 2 November, the one reading of a turn by Muse Spark 1.3 took 1.4, 4.6, 2.3 and 1.7 seconds on four typed turns of one conversation. The longest was the turn that carried the most conversation in its prompt.
+
+Nothing was changed for this entry. It is recorded because every second matters on a telephone line, and it is why realtime transcription is the first open improvement below.
+
+## Entry 15. An answer that does not fit the format now gets a second try
+
+An answer that was not valid JSON, or did not fit the format, was treated at once as not understood, so one bad answer cost the caller a turn.
+
+Talk now asks once more, saying why the first answer could not be used, and waits at most four seconds for the second answer. If that answer does not fit either, the rules carry on as before. The counts of answers, rejections, repairs and failures are shown on `/health`.
+
+The tests cover the second try, the second failure and the time limit. How often it is needed on live calls has not been measured yet.
+
 ## Open improvements, starting with the most valuable
 
 1. Realtime transcription over Meta's WebSocket while the caller speaks, at `wss://api.meta.ai/v1/asr/realtime`, so that the words are ready when the caller stops. We expect it to save about 2.5 seconds on every turn compared with reading a finished recording.
 2. A measurement of the streamed path on real calls over the trunk, so that the figures of entries 6 and 7 are confirmed on a real phone line.
+3. The rate of second tries from entry 15 on live calls, read from `/health`, and the share of emergencies that only the model recognised.

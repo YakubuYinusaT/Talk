@@ -94,7 +94,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/health")
     def health():
         return {"ok": True, "sms": "mock" if settings.sms_is_mock else "live",
-                "asr": settings.asr_url, "llm": settings.llm_url, "tts": voice_in_use(settings), "streamed_calls": settings.sip_enabled}
+                "asr": settings.asr_url, "llm": settings.llm_url, "tts": voice_in_use(settings), "streamed_calls": settings.sip_enabled,
+                "model_answers": getattr(getattr(app.state, "svc", None), "llm", None) and app.state.svc.llm.stats}
 
     @app.get("/audio/{name}")
     def audio(name: str):

@@ -34,9 +34,14 @@ def caller_location(text: str) -> data.Area | None:
     """The area the caller says they are in or will travel from ("I am in Surulere", "I will be coming from Ikorodu"), or None when the caller has not said
     where they are. An area that is only part of a request ("a clinic in Yaba", "Ikeja Allen Medical Centre") is not where the caller is."""
     said = " ".join(words(text))
-    if not SELF_LOCATION.search(said):
+    area = match_area(text)
+    if area is None or not SELF_LOCATION.search(said):
         return None
-    return match_area(text)
+    for name in (area.name.lower(), *area.aliases):
+        m = re.search(rf"\b{re.escape(name)}\b", said)
+        if m:   # the words that say where the caller is must come just before the place: "I am not bleeding, I want a check-up in Surulere" is not one
+            return area if SELF_LOCATION.search(" ".join(said[:m.start()].split()[-6:])) else None
+    return area     # a place recognised only by its sound, after words that say where the caller is
 
 
 def match_area(text: str) -> data.Area | None:

@@ -97,7 +97,10 @@ class Settings(BaseSettings):
     twilio_auth_token: str = ""
     recording_allowed_hosts: str = "africastalking.com,at-internal.com"  # a recording is downloaded only from these hosts (and their sub-domains), over https; empty = any (not safe)
     recording_retention_days: int = 30   # a caller's recording is deleted this long after the call; 0 keeps recordings
-    debug_headers: bool = True  # X-Sofa-* headers used by the call simulator
+    debug_headers: bool = False  # X-Sofa-* headers with what Talk said, for the call simulator only: never on a public server
+    # The networks the telephony providers call from, as CIDR blocks separated by commas, for example 102.223.37.0/24. When set, a callback from any other
+    # address is refused, as a second lock beside the secret in the callback address. Empty = not checked.
+    callback_allowed_networks: str = ""
 
     # Dialogue tuning
     asr_min_confidence: float = -1.3  # avg log-prob; below this the transcript is treated as unheard

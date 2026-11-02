@@ -186,3 +186,49 @@ def test_an_error_status_from_the_model_service_is_raised_for_the_caller_to_hand
     c.http = httpx.AsyncClient(transport=httpx.MockTransport(refuse))
     with pytest.raises(httpx.HTTPStatusError):
         asyncio.run(c.extract(Reading, "SYSTEM", SAID))
+
+
+class Answers:
+    """Stands in for the HTTP client and gives one prepared answer to each request, in order."""
+
+    def __init__(self, *contents, delay=0.0):
+        self.contents, self.delay, self.payloads = list(contents), delay, []
+
+    async def post(self, url, json):  # noqa: A002
+        self.payloads.append(json)
+        if self.delay and len(self.payloads) > 1:
+            await asyncio.sleep(self.delay)
+        return FakeResp({"choices": [{"message": {"content": self.contents.pop(0)}}]})
+
+
+def test_an_answer_that_does_not_fit_is_asked_for_once_more_with_the_reason():
+    c = LLMClient("https://api.meta.ai", "some-model", "k", "meta")
+    c.http = Answers("this is not JSON", ANSWER)
+    obj, _ = asyncio.run(c.extract(Reading, "SYSTEM", SAID))
+    assert obj.action == "find_clinic" and len(c.http.payloads) == 2
+    assert "YOUR LAST ANSWER COULD NOT BE USED" in c.http.payloads[1]["messages"][0]["content"]
+    assert c.stats == {"answers": 1, "rejected": 1, "repaired": 1, "failed": 0}
+
+
+def test_a_second_answer_that_does_not_fit_either_leaves_an_empty_reading_and_no_third_try():
+    c = LLMClient("https://api.meta.ai", "some-model", "k", "meta")
+    c.http = Answers("not JSON", "still not JSON")
+    obj, raw = asyncio.run(c.extract(Reading, "SYSTEM", SAID))
+    assert obj == Reading() and "error" in raw and len(c.http.payloads) == 2 and c.stats["failed"] == 1
+
+
+def test_a_slow_second_try_is_given_up_so_the_caller_is_not_kept_waiting(monkeypatch):
+    import sofa.clients.llm as llm
+
+    monkeypatch.setattr(llm, "REPAIR_SECONDS", 0.05)
+    c = LLMClient("https://api.meta.ai", "some-model", "k", "meta")
+    c.http = Answers("not JSON", ANSWER, delay=1.0)
+    obj, _ = asyncio.run(c.extract(Reading, "SYSTEM", SAID))
+    assert obj == Reading() and c.stats["failed"] == 1
+
+
+def test_a_good_first_answer_is_never_asked_for_again():
+    c = LLMClient("https://api.meta.ai", "some-model", "k", "meta")
+    c.http = Answers(ANSWER)
+    obj, _ = asyncio.run(c.extract(Reading, "SYSTEM", SAID))
+    assert obj.action == "find_clinic" and len(c.http.payloads) == 1 and c.stats["rejected"] == 0

@@ -20,7 +20,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy import func, select
 
-from .. import voicexml
+from .. import hardening, voicexml
 from ..audio import fetch_recording, to_16k_mono, wav_rms
 from ..dialogue.outcome import Outcome, daypart, new_state
 from ..dialogue.templates import LANG, render
@@ -56,7 +56,7 @@ def _log_fields(kind: str, form) -> None:
 
 
 def _check_secret(request: Request, secret: str) -> None:
-    if secret != request.app.state.svc.settings.at_callback_secret:
+    if not hardening.callback_allowed(request, secret):   # a wrong secret or a wrong network looks the same: nothing is here
         raise HTTPException(status_code=404)
 
 
