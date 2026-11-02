@@ -133,7 +133,9 @@ class CallManager:
     # ---- a turn ------------------------------------------------------------------------------------
 
     async def handle(self, transcript: str, confidence: float) -> Outcome:
-        return self.note_asked_more(await self.reword(await self._handle(transcript, confidence)))
+        out = self.note_asked_more(await self.reword(await self._handle(transcript, confidence)))
+        self.st["talk_said"] = (out.extra.get("reference") or out.text or "")[:400]   # the model reads the caller's next words against what Sofa has just said
+        return out
 
     def note_asked_more(self, out: Outcome) -> Outcome:
         """Remember whether this reply ended with "is there anything else?": the next "no" then means goodbye."""

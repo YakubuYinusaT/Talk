@@ -70,6 +70,7 @@ class Request:
     red_flag: bool = False
     origin: str | None = None  # the area the caller is in or will travel from, only when they said so: every travel time starts here
     from_asked: bool = False   # Talk has asked where the caller will travel from, once
+    earliest: bool = False     # the caller asked for the first free time ("the next available slot"), at any point in the call
     tries: int = 0                # how many times the same question has been asked
     utterance: str = ""
 
@@ -305,7 +306,9 @@ class HealthAdapter(ServiceAdapter):
         found = parse_when(text, self.now())
         area = gazetteer.match_area(text)
         req = Request(need=gazetteer.detect_need(text), area=area.name if area else None, when=text if not said_nothing_about_time(found) else None,
-                      drug=gazetteer.match_drug(text), red_flag=floor.read(text).level == floor.EMERGENCY, utterance=text[:300])
+                      drug=gazetteer.match_drug(text), red_flag=floor.read(text).level == floor.EMERGENCY, utterance=text[:300], earliest=wants_earliest(text))
+        here = gazetteer.caller_location(text)
+        req.origin = here.name if here else None
         schema = {"type": "object", "additionalProperties": False, "required": list(Reading.model_fields),
                   "properties": {"need": {"anyOf": [{"type": "string", "enum": gazetteer.NEED_CHOICES}, {"type": "null"}], "description": "what the caller needs care for"},
                                  **{n: {"anyOf": [{"type": "string"}, {"type": "null"}], "description": d} for n, d in (
@@ -342,7 +345,7 @@ class HealthAdapter(ServiceAdapter):
         req = await started if started is not None else await self.read(gw, transcript)    # already running since the turn began, when the orchestrator could start it
         if req.need == "emergency care":    # the model read an emergency by meaning
             return await self.emergency(gw, transcript)
-        tool_id = self.tool_of(u, req)
+        tool_id = self.carry_on(gw, transcript, req, self.tool_of(u, req))
         if not tool_id:
             out = gw.ask("health_ask_what", {"kind": PENDING, "step": "what", "req": req.pack()}, action="health_ask_what", service="health services")
             out.extra["not_understood"] = True    # the orchestrator counts these, so that a caller who is never understood is handed to the clinic's staff and not asked again for ever
@@ -356,8 +359,99 @@ class HealthAdapter(ServiceAdapter):
             return u.tool
         return "health.drug_availability" if req.drug else None
 
+    # ---- the memory of the call -------------------------------------------------------------------------------
+    # A question holds what it needs only while it is open. What the caller said and what Sofa offered are also kept here, for the whole call, so that a
+    # detail given late, a "book it" after the question has closed, or a request made again later starts from what is already known.
+
+    DURABLE = ("need", "area", "origin", "facility", "when", "drug", "earliest", "from_asked")
+    FOLLOWS_A_PLACE = ("health.book_appointment", "health.available_slots", "health.facility_status")
+
+    @staticmethod
+    def memory(gw) -> dict:
+        return gw.st.setdefault("health_memory", {})
+
+    def remember(self, gw, req: Request, tool_id: str | None = None, **offered) -> None:
+        """Keep what this request knows and what Sofa has just offered. A later turn only adds to it: nothing is lost when a question closes."""
+        mem = self.memory(gw)
+        facts = mem.setdefault("req", {})
+        facts.update({k: getattr(req, k) for k in self.DURABLE if getattr(req, k)})
+        if tool_id and tool_id in dict(TOOLS):
+            mem["tool"] = tool_id
+        mem.update({k: v for k, v in offered.items() if k in ("options", "place", "slot") and v})
+        gw.st["call_so_far"] = self.call_so_far(mem)
+
+    def remember_where(self, gw, transcript: str) -> None:
+        """Where the caller said they are, whatever question they were answering ("No, nobody is in danger. I dey Ikorodu.")."""
+        here = gazetteer.caller_location(transcript)
+        if here:
+            facts = self.memory(gw).setdefault("req", {})
+            facts["origin"] = here.name
+            facts.setdefault("area", here.name)
+
+    def recall(self, gw, tool_id: str, req: Request) -> None:
+        """Fill what this request does not say from what the caller said earlier in the call. What the caller says now always wins."""
+        mem = gw.st.get("health_memory") or {}
+        facts = mem.get("req") or {}
+        if not facts and not mem.get("place"):
+            return
+        req.origin = req.origin or facts.get("origin")
+        req.from_asked = req.from_asked or bool(facts.get("from_asked"))
+        if tool_id in ("health.cancel_appointment", "health.ask_the_centre"):
+            return
+        if tool_id == "health.drug_availability":
+            req.drug = req.drug or (facts.get("drug") if mem.get("tool") == tool_id else None)
+            req.area = req.area or facts.get("area")
+            return
+        req.need = req.need or facts.get("need")
+        req.earliest = req.earliest or bool(facts.get("earliest"))
+        if tool_id in self.FOLLOWS_A_PLACE and not (req.facility or req.area):   # "Yes, please book it": the place Sofa was talking about
+            place = mem.get("place")
+            req.facility = place["n"] if place else facts.get("facility")
+            req.area = facts.get("area")
+        req.area = req.area or facts.get("area")
+        if tool_id == "health.book_appointment":
+            req.when = req.when or facts.get("when")
+
+    def carry_on(self, gw, transcript: str, req: Request, tool_id: str | None) -> str | None:
+        """The request the caller is making. A turn that only adds a detail, or only asks to book what Sofa has just talked about, goes on with the request
+        already in hand, instead of starting again or asking what the caller wants."""
+        mem = gw.st.get("health_memory") or {}
+        before = mem.get("tool")
+        if not before:
+            return tool_id
+        words = tokens(transcript)
+        if "book" in words and (mem.get("place") or mem.get("options")) and tool_id in (None, "health.available_slots", "health.facility_status"):
+            return "health.book_appointment"
+        only_a_detail = len(words) <= 8 and (gazetteer.caller_location(transcript) or req.area or req.when) and not req.drug
+        if only_a_detail and tool_id in (None, "health.find_facility") and before != "health.drug_availability":
+            return before
+        return tool_id
+
+    def forget_offer(self, gw) -> None:
+        """A visit is booked: what was offered for it is done with. Where the caller is and what they need are still known."""
+        mem = self.memory(gw)
+        for key in ("tool", "place", "slot", "options"):
+            mem.pop(key, None)
+        for key in ("facility", "when", "earliest"):
+            mem.get("req", {}).pop(key, None)
+        gw.st["call_so_far"] = self.call_so_far(mem)
+
+    @staticmethod
+    def call_so_far(mem: dict) -> str:
+        """A few words for the model about what this call is about, so that it reads "book it" or "that one" against it. No phone number, no name of a person."""
+        facts = mem.get("req") or {}
+        parts = [f"request {mem['tool']}"] if mem.get("tool") else []
+        parts += [f"{k} {facts[k]}" for k in ("need", "area", "origin") if facts.get(k)]
+        if mem.get("place"):
+            parts.append(f"place offered {mem['place']['n']}")
+        elif mem.get("options"):
+            parts.append("places offered " + ", ".join(o["n"] for o in mem["options"]))
+        return "; ".join(parts)
+
     async def start(self, gw, tool_id: str, req: Request) -> Outcome:
         gw.st["domain"] = gw.call.service_domain = DOMAIN
+        self.recall(gw, tool_id, req)
+        self.remember(gw, req, tool_id)
         gw.raw_json = {"health": tool_id, "request": req.pack()}
         if not self.specs():
             if self.emergency_of(req):    # even with nothing to ask, a caller in an emergency is told the emergency number first
@@ -368,6 +462,8 @@ class HealthAdapter(ServiceAdapter):
         return await handlers[tool_id](gw, req)
 
     def ask(self, gw, step: str, tool_id: str, req: Request, question: str, **state) -> Outcome:
+        if tool_id in dict(TOOLS):
+            self.remember(gw, req, tool_id, **state)
         return gw.ask("health_say", {"kind": PENDING, "step": step, "tool": tool_id, "req": req.pack(), "tries": req.tries, "question": question[-300:], **state},
                       action=f"health_ask_{step}", answer=question)
 
@@ -546,7 +642,7 @@ class HealthAdapter(ServiceAdapter):
         if not reachable:
             return None, self.nothing_reachable(gw)
         if not found:
-            req.tries += 1
+            req.tries = max(req.tries, 1)   # an answer to the question was already counted when it came in: one miss is one try, not two
             return None, self.ask_where(gw, tool_id, req)
         req.tries = 0    # the question about the place is settled: the tries that were used up asking for it must not count against the next question
         options = self.compact(found[:MAX_OPTIONS])
@@ -573,9 +669,14 @@ class HealthAdapter(ServiceAdapter):
             return self.ask_where(gw, "health.available_slots", req)
         req.facility = req.facility or req.area
         place, outcome = await self.resolve_place(gw, req, "health.available_slots", bookable=True)
-        return outcome or await self.slots_of(gw, place)
+        return outcome or await self.slots_of(gw, place, req)
 
-    async def slots_of(self, gw, place: dict) -> Outcome:
+    async def slots_of(self, gw, place: dict, req: Request | None = None) -> Outcome:
+        """The next free times at a place. A caller who asked for the next available slot wants to be seen, so Talk offers to book the earliest one instead."""
+        if req is not None and (req.earliest or wants_earliest(req.utterance)):
+            return await self.book_at(gw, req, place)
+        if req is not None:
+            self.remember(gw, req, "health.available_slots", place=place)   # "Yes, please book it" after the times are read out books here
         answer = await self.provider_call(gw, self.spec_of(place), "slots", {"facility_id": place["id"], "count": 3})
         if answer is None:
             return self.nothing_reachable(gw)
@@ -601,7 +702,7 @@ class HealthAdapter(ServiceAdapter):
         if not reachable:
             return self.nothing_reachable(gw)
         if not found:
-            req.tries += 1
+            req.tries = max(req.tries, 1)   # an answer to the question was already counted when it came in: one miss is one try, not two
             return self.ask_where(gw, "health.book_appointment", req)
         req.tries = 0    # asking for the area is over: its tries must not count against the question that asks which clinic, or the one that asks when
         options = self.compact(found[:MAX_OPTIONS])
@@ -616,7 +717,7 @@ class HealthAdapter(ServiceAdapter):
             key = "health_ask_from_area" if req.area else "health_ask_from"
             return self.ask(gw, "from", "health.book_appointment", req, self.words(gw, key, place=place["n"], area=req.area), place=place)
         found = parse_when(req.when or "", self.now())
-        if said_nothing_about_time(found) and wants_earliest(req.utterance):     # "Please book me the earliest time at Aguda."
+        if said_nothing_about_time(found) and (req.earliest or wants_earliest(req.utterance)):     # "Please book me the earliest time at Aguda."
             return await self.offer_slot(gw, req, place, found, note=self.words(gw, "health_note_earliest"))
         if said_nothing_about_time(found):
             return self.ask(gw, "when", "health.book_appointment", req, self.words(gw, "health_ask_when", place=place["n"]), place=place)
@@ -679,6 +780,7 @@ class HealthAdapter(ServiceAdapter):
         sms_name = place.get("sn") or place["n"]
         text = self.words(gw, "health_sms_booked", place=sms_name, day=f"{start.strftime('%A')} {start.day} {start.strftime('%B')}", time=say_time(start), code=code)
         self.remember_visit(gw, place, appt)
+        self.forget_offer(gw)
         spec = self.spec_of(place)
         self.note(gw, "booked", provider=spec.label if spec else place["d"], place=place["n"], code=code, when=f"{say_day(start.date(), now.date())} at {say_time(start)}")
         if await self.text_caller(gw, text):
@@ -755,7 +857,7 @@ class HealthAdapter(ServiceAdapter):
             return self.nothing_reachable(gw)
         drug = next((a["drug"] for _, a in answered if a.get("drug")), None)
         if not drug:
-            req.tries += 1
+            req.tries = max(req.tries, 1)   # an answer to the question was already counted when it came in: one miss is one try, not two
             req.drug = None
             return self.ask_where(gw, "health.drug_availability", req)
         pharmacies = sorted((p for _, a in answered for p in a.get("pharmacies", [])), key=lambda p: (p["km"] is None, p["km"] if p["km"] is not None else 0, not p["open_now"], p["name"]))
@@ -780,6 +882,7 @@ class HealthAdapter(ServiceAdapter):
         st, step, tool_id = gw.st, pending["step"], pending.get("tool")
         req = Request.unpack(pending.get("req"))
         tries = pending.get("tries", 0)
+        self.remember_where(gw, transcript)
 
         if step == "what":
             u = await gw.understand(transcript)
@@ -832,8 +935,8 @@ class HealthAdapter(ServiceAdapter):
             place = options[index]
             if tool_id == "health.facility_status":
                 return await self.status_of(gw, req, place)
-            if tool_id == "health.available_slots":
-                return await self.slots_of(gw, place)
+            if tool_id == "health.available_slots" and "book" not in tokens(transcript):   # "Book the first one, please" asks for a booking, not for the times
+                return await self.slots_of(gw, place, req)
             self.take_time(req, transcript)
             return await self.book_at(gw, req, place)
 
@@ -846,6 +949,10 @@ class HealthAdapter(ServiceAdapter):
                 st["pending"] = None
                 return None
             st["pending"] = None
+            if not answered_it and not said_nothing_about_time(parse_when(transcript, self.now())):   # a day or a time, not a place: kept, and the place asked again
+                req.when, req.tries = transcript.strip()[:120], tries
+                self.remember(gw, req, tool_id)
+                return self.ask_where(gw, tool_id, req)
             req.tries = tries + 1
             req.need = req.need or fresh.need
             if tool_id == "health.drug_availability":
@@ -869,7 +976,7 @@ class HealthAdapter(ServiceAdapter):
             if yes:
                 self.note(gw, "urgency", level=floor.EMERGENCY, source="caller", hits=[])
                 return await self.emergency(gw, f"{said} {transcript}")
-            return await self.turn(gw, said, 1.0)      # nobody is in danger: the first request is answered as it was meant
+            return await self.turn(gw, said, 1.0)      # nobody is in danger: the first request is answered as it was meant, with any place said since remembered
 
         if step == "emergency_where":
             here = gazetteer.match_area(transcript) or gazetteer.match_area((await self.meaning(gw, pending, transcript)).area or "")

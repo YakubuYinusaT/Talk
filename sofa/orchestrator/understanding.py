@@ -148,8 +148,11 @@ def build(st: dict, services=()) -> str:
         "A conversation goes on over several turns. ASKED is the question Talk has just asked and IN PROGRESS is the request Talk is helping with. When the caller "
         "answers ASKED with the thing it asked for (an area, a day and time, a medicine, or a choice such as the private clinic or the cheaper one), the action is the "
         "request IN PROGRESS. When the caller only says yes or no, the action is unclear. When the caller asks for something different, name that instead.\n"
+        "TALK SAID is what Talk said last, and CALL SO FAR is what this call is about. When the caller refers back to it (book it, that one, the first one, "
+        "the cheaper one, yes please book), the action is the request it refers to, even when no question is open.\n"
         "answer: yes or no if the caller is answering the question in ASKED with a yes or a no, even when more is said (for example yes, please book the private clinic), "
         "else none.\n"
         f"EXAMPLES:\n{EXAMPLES}\n"
-        f"ASKED: {pending.get('question') or 'nothing'}\nIN PROGRESS: {pending.get('tool') or 'nothing'}\nRECENT: {history}"
+        f"ASKED: {pending.get('question') or 'nothing'}\nIN PROGRESS: {pending.get('tool') or 'nothing'}\nRECENT: {history}\n"
+        f"TALK SAID: {st.get('talk_said') or 'nothing'}\nCALL SO FAR: {st.get('call_so_far') or 'nothing'}"
     )

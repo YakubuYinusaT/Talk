@@ -122,8 +122,17 @@ Talk now asks once more, saying why the first answer could not be used, and wait
 
 The tests cover the second try, the second failure and the time limit. How often it is needed on live calls has not been measured yet.
 
+## Entry 16. Sofa forgot what the caller had already said
+
+On the live service on 2 November, two callers said almost the same thing: a child has a high fever, and they want the next available slot. In one call Muse Spark read it as a possible emergency, so Talk gave the emergency number and asked whether someone was in danger. In the other call it read no urgency at all. Both readings are reasonable for a fever, but they mean a caller cannot predict which question comes next.
+
+The same calls showed a deeper fault in Talk itself: Sofa forgot things. A caller who answered the danger question with where they were ("I dey Ikorodu") was asked for the area again. A caller who said "Yes, please book it" after Sofa had read out the free times was asked what they would like to do. A caller who gave the wrong kind of answer once had that answer counted twice, so Talk gave up after a single miss. The cause was that what the caller said was kept only inside the question Talk was asking, and was thrown away when that question closed. The model also saw only the caller's last two sentences, never what Sofa itself had just said.
+
+Talk now keeps a memory of the whole call. Where the caller is, what they need, the clinic, the day and time, and what Sofa last offered are kept from turn to turn, whatever question was open, and every new request starts from them. A turn that only adds a detail, or only says "book it", goes on with the request already in hand. The model now also sees what Sofa said last and a short note of what the call is about. An answer that is not a place uses one try, not two, and a caller who asks for the next available slot is offered the earliest time to book. The tests replay the failed calls and others where the caller answers late, out of order, or comes back after a closed question. How often the urgency reading differs on the same sentence has not been measured yet; that is the fourth open improvement below.
+
 ## Open improvements, starting with the most valuable
 
 1. Realtime transcription over Meta's WebSocket while the caller speaks, at `wss://api.meta.ai/v1/asr/realtime`, so that the words are ready when the caller stops. We expect it to save about 2.5 seconds on every turn compared with reading a finished recording.
 2. A measurement of the streamed path on real calls over the trunk, so that the figures of entries 6 and 7 are confirmed on a real phone line.
 3. The rate of second tries from entry 15 on live calls, read from `/health`, and the share of emergencies that only the model recognised.
+4. A repeat test of the urgency reading from entry 16: the same sentence sent many times, to measure how often Muse Spark reads it differently.
