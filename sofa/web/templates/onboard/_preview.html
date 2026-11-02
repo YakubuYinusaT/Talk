@@ -1,0 +1,11 @@
+{# What Talk will be allowed to say, as a short exchange for each case. It is made by sofa/onboarding/preview.py from the hospital's information as it stands, with the code that Talk itself uses. #}
+{% if problems %}<p class="muted small">Some fields need attention. The last accepted values are shown.</p>{% endif %}
+<ul class="say-list">
+  {% for item in items_preview %}
+  <li class="say">
+    <h3>{{ item.title }}</h3>
+    <p class="line"><span class="who">Caller</span>&ldquo;{{ item.caller }}&rdquo;</p>
+    <p class="line talk"><span class="who">Talk</span>{{ item.talk }}</p>
+  </li>
+  {% endfor %}
+</ul>

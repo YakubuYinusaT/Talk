@@ -1,0 +1,237 @@
+{# One provider's front desk, built in the shared shell (base.html) with the shared components (_ui.html). The part inside id="desk-live" is the part that is refreshed while the page stays open
+   (see desk.js); the identity band, the section links and the refresh controls stay as they are, so that nothing the visitor is typing is ever lost. A desk shown inside another page
+   (embedded) leaves out the header and the footer. The page says only what a member of staff needs in order to act: the names of things, the figures and the buttons. #}
+{% extends "base.html" %}
+{% from "_marks.html" import mark %}
+{% from "_ui.html" import icon, badge, button, input, select, empty, stat, table %}
+{% set nav_current = "Onboard a hospital" if demo else "Providers" %}
+{% set visit_tone = {"booked": "accent", "confirmed": "success", "attended": "success", "no_show": "warning"} %}
+{% set visit_icon = {"booked": "clock", "confirmed": "check", "attended": "check", "no_show": "cross"} %}
+{% block title %}{{ name }}{% endblock %}
+{% block description %}The front desk of {{ name }}, a simulated provider system that Talk reaches over a signed connection.{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/desk.css?v={{ asset_v() }}"><script src="/static/desk.js?v={{ asset_v() }}" defer></script>{% endblock %}
+{% block body_class %}desk accent-{{ identity.accent }}{% if embedded %} embedded{% endif %}{% endblock %}
+
+{# One staff button that posts a visit or request to the desk. The key and the code travel with it as hidden fields, and the label names the booking for a screen reader. #}
+{% macro act(path, key, code, label, kind="secondary", icon_name="", outcome="") -%}
+<form method="post" action="desk/{{ path }}"><input type="hidden" name="key" value="{{ key }}"><input type="hidden" name="code" value="{{ code }}">
+  {{ button(label, kind, type="submit", icon_name=icon_name, size="sm", name="outcome" if outcome else "", value=outcome, extra={"aria-label": label ~ ", booking " ~ code}) }}</form>
+{%- endmacro %}
+
+{% block main %}
+  <section class="identity" aria-labelledby="desk-title">
+    <div class="page identity-inner">
+      <span class="mark" aria-hidden="true">{{ mark(identity.mark) }}</span>
+      <div class="identity-text">
+        <h1 id="desk-title">{{ name }}</h1>
+        <p class="badges">
+          {{ badge(identity.type, "accent") }}
+          {% if access == "staff" %}
+          {{ badge("Staff access", "success", "key") }}
+          {% if assistant %}{{ badge(assistant.name ~ ", " ~ assistant.role|lower, "neutral", "person") }}{% endif %}
+          {% else %}
+          {{ badge("Read only", "neutral", "eye") }}
+          {% endif %}
+        </p>
+      </div>
+      {% if access in ("read", "wrong") %}
+      <form class="keyform" method="get">
+        {{ input("desk-key", "Desk key", name="key", type="password", required=True, error="That key was not accepted." if access == "wrong" else "") }}
+        {{ button("Unlock", type="submit", icon_name="key") }}
+      </form>
+      {% endif %}
+    </div>
+  </section>
+
+  <div class="page desk-body">
+    <div class="toolbar">
+      <nav class="sections" aria-label="Sections">
+        <a href="#requests">Requests</a>
+        {% if bookable %}<a href="#appointments">Appointments</a>{% endif %}
+        {% if stock %}<a href="#stock">Medicine stock</a>{% endif %}
+        {% if guide %}<a href="#guide">Patient guide</a>{% endif %}
+        <a href="#places">Places</a>
+      </nav>
+      <noscript><p class="muted small">Please reload the page to refresh it.</p></noscript>
+      <div class="refresh needs-js">
+        <label class="check" for="auto-refresh"><input type="checkbox" id="auto-refresh" checked><span>Auto refresh</span></label>
+        {{ button("Refresh", "secondary", size="sm", icon_name="refresh", id="refresh-now") }}
+        <span class="updated" id="updated"></span>
+      </div>
+    </div>
+
+    <div id="desk-live">
+      <p class="clock">{{ icon("clock") }} {{ clock }}</p>
+
+      <ul class="stats" data-urgent="{{ urgent }}">
+        {% for t in tiles %}{{ stat(t.label, t.figure, t.note|default(""), t.alert|default(False)) }}{% endfor %}
+      </ul>
+
+      <div class="desk-stack">
+
+        {# ---- the request inbox: urgent first ---- #}
+        <section class="card" id="requests" aria-labelledby="requests-title">
+          <div class="card-head">
+            <h2 class="card-title" id="requests-title" tabindex="-1">Requests</h2>
+            <p class="count">{{ waiting|length }} waiting{% if urgent %}, {{ urgent }} urgent{% endif %}</p>
+          </div>
+          {% if waiting %}
+          <ol class="requests">
+            {% for r in waiting %}
+            <li class="request{% if r.urgent %} urgent{% endif %}" id="request-{{ r.code }}" tabindex="-1">
+              <div class="request-head">
+                {% if r.urgent %}{{ badge("Urgent", "danger", "warn") }}{% endif %}
+                {{ badge(r.kind, "neutral", r.icon) }}
+                <span class="age">{{ r.age }}</span>
+              </div>
+              <p class="said"><span class="sr-only">The caller said: </span>{{ r.summary }}</p>
+              <p class="refs">Caller <code>{{ r.ref }}</code> &middot; <code>{{ r.code }}</code></p>
+              {% if marking %}
+              <form class="answer" method="post" action="desk/reply">
+                <input type="hidden" name="key" value="{{ key }}">
+                <input type="hidden" name="code" value="{{ r.code }}">
+                <div class="answer-row">
+                  <label class="sr-only" for="answer-{{ r.code }}">Reply to the caller</label>
+                  <input class="input" id="answer-{{ r.code }}" type="text" name="reply" maxlength="300" required autocomplete="off" placeholder="Reply by text message">
+                  {{ button("Send reply", type="submit", extra={"aria-label": "Send reply to " ~ r.code}) }}
+                </div>
+                <p class="quick needs-js" data-for="answer-{{ r.code }}">
+                  {% if r.urgent %}{{ button("Come now", "secondary", size="sm", extra={"data-fill": "Please come to the emergency entrance now. A nurse is ready to receive you."}) }}{% endif %}
+                  {{ button("Visit the front desk", "secondary", size="sm", extra={"data-fill": "Thank you for asking. Please come to the front desk and our team will gladly help you."}) }}
+                </p>
+              </form>
+              {% endif %}
+            </li>
+            {% endfor %}
+          </ol>
+          {% else %}
+          {{ empty("No requests waiting") }}
+          {% endif %}
+
+          {% if answered %}
+          <details class="answered" id="answered">
+            <summary>{{ answered|length }} answered</summary>
+            <ul class="answered-list">
+              {% for r in answered %}
+              <li>
+                <p class="said"><span class="sr-only">The caller said: </span>{{ r.summary }}</p>
+                <p class="given"><b>Replied {{ r.replied }}:</b> {{ r.reply }}</p>
+                <p class="refs">Caller <code>{{ r.ref }}</code> &middot; <code>{{ r.code }}</code> &middot; {{ r.kind }}</p>
+              </li>
+              {% endfor %}
+            </ul>
+          </details>
+          {% endif %}
+        </section>
+
+        {# ---- the appointment book, as a timeline for each day ---- #}
+        {% if bookable %}
+        <section class="card" id="appointments" aria-labelledby="appointments-title">
+          <div class="card-head">
+            <h2 class="card-title" id="appointments-title">Appointments</h2>
+          </div>
+          {% if groups %}
+          {% if book_places|length > 1 %}
+          <div class="filter needs-js">{{ select("place-filter", "Place", [("", "All places")] + book_places) }}</div>
+          {% endif %}
+          {% for g in groups %}
+          <section class="day" aria-labelledby="day-{{ g.iso }}">
+            <h3 id="day-{{ g.iso }}">{{ g.label }} <span class="count">{{ g.visits|length }} visit{{ "" if g.visits|length == 1 else "s" }}</span></h3>
+            <ol class="timeline">
+              {% for v in g.visits %}
+              <li class="visit {{ v.status }}{% if v.passed %} passed{% endif %}" id="visit-{{ v.code }}" tabindex="-1" data-place="{{ v.place_id }}" data-status="{{ v.status }}">
+                <span class="time">{{ v.time }}</span>
+                <div class="detail">
+                  <p class="what"><b>{{ v.visit|capitalize }}</b> at {{ v.place }}</p>
+                  <p class="refs">Caller <code>{{ v.ref }}</code> &middot; <code>{{ v.code }}</code></p>
+                </div>
+                <div class="state">
+                  {% if v.passed %}{{ badge("Needs marking", "warning", "warn") }}{% else %}{{ badge(v.label, visit_tone.get(v.status, "neutral"), visit_icon.get(v.status, "clock")) }}{% endif %}
+                </div>
+                {% if marking and v.status in ("booked", "confirmed") %}
+                <div class="acts">
+                  {% if v.status == "booked" %}{{ act("confirm", key, v.code, "Confirm", "primary", "check") }}{% endif %}
+                  {{ act("mark", key, v.code, "Attended", "secondary", "check", "attended") }}
+                  {{ act("mark", key, v.code, "Did not come", "secondary", "cross", "no_show") }}
+                </div>
+                {% endif %}
+              </li>
+              {% endfor %}
+            </ol>
+          </section>
+          {% endfor %}
+          {% else %}
+          {{ empty("No appointments yet") }}
+          {% endif %}
+        </section>
+        {% endif %}
+
+        {# ---- the medicine stock list, for a pharmacy: one row for each medicine and one column for each pharmacy ---- #}
+        {% if stock %}
+        <section class="card" id="stock" aria-labelledby="stock-title">
+          <div class="card-head">
+            <h2 class="card-title" id="stock-title">Medicine stock</h2>
+            <p class="count">{{ stock.rows|length }} medicines</p>
+          </div>
+          <div class="filter needs-js">{{ input("stock-filter", "Search medicines", type="search") }}</div>
+          {% call table(["Medicine", "Price"] + stock.areas) %}
+            {% for row in stock.rows %}
+            <tr class="drug" data-name="{{ row.name|lower }}">
+              <td data-label="Medicine"><span class="cell"><b>{{ row.name }}</b>{% if row.prescription %} {{ badge("Prescription only", "info") }}{% endif %}</span></td>
+              <td data-label="Price" class="num">&#8358;{{ "{:,}".format(row.price) }}</td>
+              {% for h in row.held %}<td data-label="{{ stock.areas[loop.index0] }}" class="num">{% if h.qty %}{{ h.qty }}{% else %}<span class="out">Out</span>{% endif %}</td>{% endfor %}
+            </tr>
+            {% endfor %}
+          {% endcall %}
+          <div class="needs-js" id="stock-none" hidden>{{ empty("No medicine found") }}</div>
+        </section>
+        {% endif %}
+
+        {# ---- the patient guide, for a provider that has one ---- #}
+        {% if guide %}
+        <section class="card" id="guide" aria-labelledby="guide-title">
+          <div class="card-head">
+            <h2 class="card-title" id="guide-title">Patient guide</h2>
+            {{ badge("Sample content" if guide.sample else "Your content", "sim" if guide.sample else "accent") }}
+          </div>
+          {% if guide.warning %}
+          <div class="notice is-danger" id="warning-signs">
+            {{ icon("warn") }}
+            <p><b>Warning signs</b> {{ guide.warning.answer }}</p>
+          </div>
+          {% endif %}
+          <div class="entries">
+            {% for e in guide.entries %}
+            <details id="entry-{{ e.id }}">
+              <summary>{{ e.title }}</summary>
+              <p>{{ e.answer }}</p>
+            </details>
+            {% endfor %}
+          </div>
+          <p class="source">Source: {{ guide.source }}</p>
+        </section>
+        {% endif %}
+
+        {# ---- the waiting queue, place by place ---- #}
+        <section class="card" id="places" aria-labelledby="places-title">
+          <div class="card-head">
+            <h2 class="card-title" id="places-title">Places</h2>
+            <p class="count">{{ places|length }}</p>
+          </div>
+          {% call table(["Place", "Status", "Waiting", "Wait", "Fee", "Hours"]) %}
+            {% for p in places %}
+            <tr>
+              <td data-label="Place"><span class="cell"><b>{{ p.name }}</b><span class="sub">{{ p.kind|capitalize }}, {{ p.area }}</span></span></td>
+              <td data-label="Status"><span class="cell-badges">{% if p.open %}{{ badge("Open", "success", "check") }}{% else %}{{ badge("Closed", "neutral", "clock") }}{% endif %}{% if p.emergency %}{{ badge("Emergencies", "info") }}{% endif %}</span></td>
+              <td data-label="Waiting" class="num">{{ p.people if p.open else "&ndash;"|safe }}</td>
+              <td data-label="Wait" class="num">{{ p.wait ~ " minutes" if p.open else "&ndash;"|safe }}</td>
+              <td data-label="Fee" class="num">{% if p.fee %}&#8358;{{ "{:,}".format(p.fee) }}{% else %}No fee{% endif %}</td>
+              <td data-label="Hours" class="num">{{ p.hours }}</td>
+            </tr>
+            {% endfor %}
+          {% endcall %}
+        </section>
+      </div>
+    </div>
+  </div>
+{% endblock %}

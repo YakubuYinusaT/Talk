@@ -1,0 +1,42 @@
+{% extends "onboard/_layout.html" %}
+{% from "_ui.html" import notice, button, badge, card %}
+{% from "desk/_marks.html" import mark %}
+
+{% block step_body %}
+<div class="wiz">
+  {% if problem %}{{ notice(problem, "danger") }}{% endif %}
+
+  {% if row %}
+  {% call card() %}
+  <div class="resume">
+    <div>
+      <strong>{{ row.profile.name }}</strong>
+      <span class="muted small">Step {{ row.step if row.step <= total else total }} of {{ total }}</span>
+    </div>
+    {{ button("Continue", href="/onboard/step/" ~ (row.step if row.step <= total else total)) }}
+  </div>
+  {% endcall %}
+  {% endif %}
+
+  <form method="post" action="/onboard/start" aria-label="Templates">
+    <fieldset class="bare">
+      <legend class="sr-only">Template</legend>
+      <div class="templates">
+        {% for key, t in templates_list.items() %}
+        <label class="template accent-{{ t.accent }}" for="tpl-{{ key }}">
+          <input type="radio" name="template" id="tpl-{{ key }}" value="{{ key }}" required{% if loop.first %} checked{% endif %}>
+          <span class="tpl-mark" aria-hidden="true">{{ mark("centre" if key == "general" else "ribbon" if key == "maternity" else "clinic") }}</span>
+          <span class="tpl-title">{{ t.title }}</span>
+          <span class="tpl-name">{{ t.name }}</span>
+          <span class="tpl-facts">{{ t.area }} &middot; {{ t.owner|capitalize }} &middot; {{ "{:,}".format(t.fee) }} naira &middot; {{ t.wait }} minute wait</span>
+        </label>
+        {% endfor %}
+      </div>
+    </fieldset>
+    <div class="form-actions">
+      <span class="spacer"></span>
+      {{ button("Start over" if row else "Continue", "secondary" if row else "primary", type="submit") }}
+    </div>
+  </form>
+</div>
+{% endblock %}

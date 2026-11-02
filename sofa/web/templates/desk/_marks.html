@@ -1,0 +1,21 @@
+{# The pictures on a front desk: one mark for each kind of provider, and the small icons that sit beside a label so that no meaning depends on colour alone. #}
+
+{# The mark of a provider, drawn with the current text colour so that it follows the accent of that provider. It is decoration, because the name is always written beside it. #}
+{% macro mark(kind) -%}
+<svg class="mark-svg" viewBox="0 0 48 48" width="48" height="48" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  {% if kind == "centre" %}
+  <path d="M7 41V19l17-9 17 9v22"/><path d="M3.5 41h41"/><path d="M24 20v10M19 25h10"/><path d="M20 41v-6.5h8V41"/>
+  {% elif kind == "clinic" %}
+  <rect x="7" y="7" width="34" height="34" rx="9"/><path d="M24 33.5s-8.5-5-8.5-11.2a4.6 4.6 0 018.5-2.4 4.6 4.6 0 018.5 2.4c0 6.2-8.5 11.2-8.5 11.2z"/>
+  {% elif kind == "pharmacy" %}
+  <g transform="rotate(-40 24 24)"><rect x="4.5" y="15.5" width="39" height="17" rx="8.5"/><path d="M24 15.5v17"/></g><path d="M36 8v8M32 12h8"/>
+  {% elif kind == "ribbon" %}
+  <path d="M24 6.5c-5.5 0-9.5 4-9.5 8.8 0 6.5 9.5 13.2 9.5 13.2s9.5-6.7 9.5-13.2c0-4.8-4-8.8-9.5-8.8z"/><path d="M18.5 25.5L11.5 42l8.5-3.5 4 5.5M29.5 25.5L36.5 42l-8.5-3.5"/>
+  {% else %}
+  <circle cx="24" cy="24" r="16"/><path d="M24 16v16M16 24h16"/>
+  {% endif %}
+</svg>
+{%- endmacro %}
+
+{# The small icons now live in _ui.html with the rest of the components. This name is kept so that the templates which import it from here keep working; it is deleted when none does. #}
+{% macro icon(name) -%}{% from "_ui.html" import icon as shared_icon %}{{ shared_icon(name) }}{%- endmacro %}

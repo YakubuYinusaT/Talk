@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% from "_ui.html" import page_header, card, button, table %}
+{% block title %}How it works{% endblock %}
+{% block description %}How a phone call becomes a booked visit: Muse Voice Transcribe hears, Muse Spark understands, Talk asks the providers, and the facts come from their own records.{% endblock %}
+
+{% block body %}
+{# A reference page: the facts sit in tables, so the page itself holds very little prose. #}
+<div class="stack-lg">
+  {% call page_header("How it works") %}{{ button("Try it", "secondary", href="/try") }}{% endcall %}
+
+  {% call card("One call, step by step", id="steps") %}
+    {{ table(["Step", "Message"], [
+      ["1. Caller to Talk", "Dials the number and speaks"],
+      ["2. Talk to Muse Voice Transcribe", "Recording, with place and medicine names"],
+      ["3. Muse Voice Transcribe to Talk", "The words that were said"],
+      ["4. Talk to Muse Spark", "The words and the conversation so far"],
+      ["5. Muse Spark to Talk", "Need, place and time, in the caller's own words"],
+      ["6. Talk to Providers", "A signed question to every provider at once"],
+      ["7. Providers to Talk", "Places, free times, stock and guide answers"],
+      ["8. Talk to Caller", "Reads out the real options"],
+      ["9. Talk to Provider", "Books the chosen time after a clear yes"],
+      ["10. Provider to Talk", "Confirms, with a booking code"],
+      ["11. Talk to Caller", "Confirms the visit and sends a text"],
+      ["12. Talk to Staff", "Passes on a question or an emergency, urgent first"],
+      ["13. Staff to Talk", "Reply on the front desk, texted to the caller"],
+      ["14. Talk to Caller", "Reminder before the visit, follow-up after"]
+    ]) }}
+  {% endcall %}
+
+  {% call card("Models", id="models") %}
+    {{ table(["Model", "Job", "Used for"], [
+      ["Muse Voice Transcribe", "Hears the caller", "Phone calls, with place and medicine names to listen for"],
+      ["Muse Spark", "Understands each sentence", "Strict JSON: action, need, place and time"]
+    ]) }}
+  {% endcall %}
+
+  {% call card("Providers", id="providers") %}
+    {{ table(["Talk asks a provider to", "Answer"], [
+      ["Find places", "Hours, queue and fee"],
+      ["List free times", "Then book or cancel"],
+      ["Check stock", "Which pharmacies have the medicine"],
+      ["Search its patient guide", "Entries that answer the question"],
+      ["Pass a message to staff", "And report the reply"],
+      ["Report a visit", "Booked, attended, missed or cancelled"]
+    ]) }}
+  {% endcall %}
+
+  {% call card("Privacy and limits", id="limits") %}
+    {{ table(["Topic", "Rule"], [
+      ["Phone numbers", "A provider sees a reference, never the number"],
+      ["Recordings", ("Deleted after " ~ retention_days ~ " days") if retention_days else "Kept as the deployment sets"],
+      ["Texts", "Name a place discreetly, never by treatment"],
+      ["Advice", "No diagnosis. The facility's own guide only"],
+      ["Emergencies", "112 first. Talk dispatches no one"],
+      ["Language", "English"]
+    ]) }}
+  {% endcall %}
+</div>
+{% endblock %}

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% from "_ui.html" import page_header, button, badge %}
+{% block title %}Providers{% endblock %}
+{% block description %}The four simulated providers Talk reaches over a signed connection: a state health network, private clinics, a pharmacy chain and a cancer centre.{% endblock %}
+
+{% block body %}
+{% set accents = {"state-phc": "green", "eko-care": "blue", "everwell": "teal", "onc-centre": "purple"} %}
+{% call page_header("Providers") %}
+  {% if onboard_enabled %}{{ button("Onboard a hospital", "secondary", href="/onboard") }}{% endif %}
+  {{ button("How it works", "quiet", href="/overview/technology") }}
+{% endcall %}
+
+<div class="grid cols-2">
+  {% for p in providers %}
+  <section class="card provider accent-{{ accents.get(p.slug, 'green') }}" aria-labelledby="provider-{{ p.slug }}">
+    <div class="card-head">
+      <h2 class="card-title" id="provider-{{ p.slug }}">{{ p.name }}</h2>
+    </div>
+    <p class="badges">{{ badge(p.kind, "accent") }}{{ badge(p.places ~ (" place" if p.places == 1 else " places")) }}</p>
+    {{ button("Open front desk", "primary", href=p.desk) }}
+  </section>
+  {% endfor %}
+</div>
+{% endblock %}

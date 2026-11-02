@@ -1,0 +1,193 @@
+"""Try it (/try): a visitor types to Talk in the browser and sees what happened inside each reply.
+
+It goes through the same path as a phone call (the same language model, the same front desk, the same four simulated providers), only the speech
+recognition is left out because the words are typed. Nothing leaves the page: the text message a call would send is recorded as sent without calling
+the text-message service, and a booking made here lands on the provider's own front desk like any other.
+
+  GET  /try         the page
+  POST /try/start   {} -> {"session", "greeting", ...}
+  POST /try/turn    {"session", "text"} -> {"reply", "ended", "action", "trace", "steps_html", "turns_left"}
+
+The feature is guarded because every turn costs a model call: JSON only, at most 300 characters a message, a per-network hourly limit, a limit on the
+messages in one conversation, a conversation that expires, and a cap on everything at once. Nothing it sends back holds a secret or a phone number.
+"""
+
+import logging
+import re
+import secrets
+import time
+from collections import deque
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
+
+from ..onboarding import visitor as who
+from ..web import ui
+from . import voice
+
+log = logging.getLogger("sofa.try")
+router = APIRouter(prefix="/try")
+templates = ui.templates
+
+MAX_CHARS = 300
+MAX_SESSIONS = 500           # conversations alive at once, across everyone
+HOUR = 3600.0
+CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+# Ready-made conversations the visitor can step through one sentence at a time. Every line is something a real caller might say, in the polite, natural way people
+# speak on the telephone, and every conversation is meant to be run in order from the start (a booking has to exist before it can be cancelled). The page shows only
+# the title, because what each conversation does is clear from its sentences.
+SCRIPTS = [
+    {"title": "Book a clinic visit",
+     "lines": ["Please help me find the nearest clinic for antenatal care.", "I am in Surulere.", "Yes, please book the private clinic.", "Tomorrow morning, please.",
+               "Yes, please go ahead."]},
+    {"title": "Book, then cancel",
+     "lines": ["I would like to book an appointment, please.", "I am in Yaba, please.", "The first one, please.", "Tomorrow morning, please.", "Yes, please go ahead.",
+               "Please can you cancel my appointment for tomorrow?", "Yes, please."]},
+    {"title": "Medicine stock",
+     "lines": ["Hello, do you have amoxicillin in stock, please?", "Thank you. Do you have paracetamol in stock as well, please?"]},
+    {"title": "Ask the cancer centre",
+     "lines": ["What should I bring to my first visit at the cancer centre, please?", "Thank you. Could you also ask the centre about parking, please?"]},
+    {"title": "Emergency",
+     "lines": ["Please, my brother is not breathing, we are in Ikeja."]},
+]
+
+
+def now() -> float:
+    return time.monotonic()
+
+
+def enabled(request: Request) -> None:
+    if not getattr(request.app.state.svc.settings, "try_page_enabled", True):
+        raise HTTPException(404)
+
+
+def state(request: Request) -> dict:
+    st = getattr(request.app.state, "try_state", None)
+    if st is None:
+        st = request.app.state.try_state = {"sessions": {}, "ip_turns": {}, "ip_starts": {}, "all_turns": deque()}
+    return st
+
+
+def client_ip(request: Request) -> str:
+    """Who is asking, for the hourly limit. Behind the web server in front of the app the real address is the last one it appended to X-Forwarded-For."""
+    forwarded = request.headers.get("x-forwarded-for", "")
+    last = forwarded.split(",")[-1].strip() if forwarded else ""
+    return last or (request.client.host if request.client else "unknown")
+
+
+def within_hour(window: deque, limit: int, t: float) -> bool:
+    """Drop what is older than an hour, then say whether one more fits under the limit."""
+    while window and t - window[0] > HOUR:
+        window.popleft()
+    return len(window) < limit
+
+
+def purge(st: dict, minutes: int, t: float) -> None:
+    for sid in [k for k, v in st["sessions"].items() if t - v["created"] > minutes * 60]:
+        del st["sessions"][sid]
+    for table in ("ip_turns", "ip_starts"):
+        for ip in [k for k, w in st[table].items() if not w or t - w[-1] > HOUR]:
+            del st[table][ip]
+
+
+def refuse(status: int, message: str) -> JSONResponse:
+    return JSONResponse({"error": message}, status_code=status)
+
+
+async def body_of(request: Request):
+    """The JSON object the page sent, or the refusal to give: this feature takes nothing but JSON."""
+    if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
+        return refuse(415, "This takes JSON only.")
+    try:
+        body = await request.json()
+    except ValueError:
+        return refuse(400, "That was not valid JSON.")
+    return body if isinstance(body, dict) else refuse(400, "Send a JSON object.")
+
+
+@router.get("")
+def page(request: Request, _=Depends(enabled)):
+    s = request.app.state.svc.settings
+    return templates.TemplateResponse(request, "try.html", {
+        "request": request, "brand": "Talk", "scripts": SCRIPTS, "max_chars": MAX_CHARS, "max_turns": s.try_max_turns, "minutes": s.try_session_minutes,
+        "providers": ui.providers(), "test_number": getattr(s, "test_number", ""),
+    })
+
+
+@router.post("/start")
+async def start(request: Request, _=Depends(enabled)):
+    svc = request.app.state.svc
+    s = svc.settings
+    body = await body_of(request)
+    if isinstance(body, JSONResponse):
+        return body
+    st, t, ip = state(request), now(), client_ip(request)
+    purge(st, s.try_session_minutes, t)
+    starts = st["ip_starts"].setdefault(ip, deque())
+    if not within_hour(starts, max(5, s.try_turns_per_hour // 4), t):
+        return refuse(429, "Too many conversations this hour. Please try again later.")
+    if len(st["sessions"]) >= MAX_SESSIONS:
+        return refuse(503, "Talk is busy. Please try again shortly.")
+    session = secrets.token_urlsafe(16)
+    visitor = None
+    onboarding = getattr(svc, "onboarding", None)
+    if onboarding:   # a visitor who made a hospital in the onboarding wizard also sees it here, and nobody else does (sofa/onboarding)
+        visitor = onboarding.visitor_of(request)
+        with svc.session_factory() as db:
+            if onboarding.hospital_of(db, visitor):
+                session = f"onb-{who.tag(visitor)}-{session}"     # so that the Live calls page and the wizard's summary can recognise these conversations
+    try:
+        greeting = await voice.open_text_session(svc, session, visitor)
+    except Exception:
+        log.exception("could not open a text session")
+        return refuse(502, "Talk could not start. Please try again.")
+    starts.append(t)
+    st["sessions"][session] = {"created": t, "turns": 0, "ended": False, "busy": False}
+    return {"session": session, "greeting": ui.scrub(greeting), "max_turns": s.try_max_turns, "minutes": s.try_session_minutes}
+
+
+@router.post("/turn")
+async def turn(request: Request, _=Depends(enabled)):
+    svc = request.app.state.svc
+    s = svc.settings
+    body = await body_of(request)
+    if isinstance(body, JSONResponse):
+        return body
+    session, text = body.get("session"), body.get("text")
+    if not isinstance(session, str) or not isinstance(text, str):
+        return refuse(400, "Send the session and the text.")
+    text = CONTROL.sub("", text).strip()
+    if not text:
+        return refuse(400, "Please type a message.")
+    if len(text) > MAX_CHARS:
+        return refuse(400, f"Please keep it to {MAX_CHARS} characters or fewer.")
+    st, t, ip = state(request), now(), client_ip(request)
+    purge(st, s.try_session_minutes, t)
+    info = st["sessions"].get(session)
+    if info is None:
+        return refuse(404, "This conversation has expired. Please start over.")
+    if info["ended"]:
+        return refuse(409, "This call has ended. Please start over.")
+    if info["busy"]:
+        return refuse(409, "Talk is still replying.")
+    if info["turns"] >= s.try_max_turns:
+        return refuse(429, f"This conversation is limited to {s.try_max_turns} messages. Please start over.")
+    mine, everyone = st["ip_turns"].setdefault(ip, deque()), st["all_turns"]
+    if not within_hour(mine, s.try_turns_per_hour, t) or not within_hour(everyone, s.try_turns_per_hour * 10, t):
+        return refuse(429, "Too many messages this hour. Please try again later.")
+    mine.append(t)
+    everyone.append(t)
+    info["turns"] += 1
+    info["busy"] = True
+    try:
+        result = await voice.run_text_turn(svc, session, text)
+    except Exception:
+        log.exception("a typed turn failed")
+        return refuse(502, "Talk could not reply. Please try again.")
+    finally:
+        info["busy"] = False
+    info["ended"] = bool(result.get("ended"))
+    trace = ui.scrub_data(result.get("trace") or [])
+    return {"reply": ui.scrub(str(result.get("reply") or "")), "ended": info["ended"], "action": ui.scrub(str(result.get("action") or "")), "trace": trace,
+            "steps_html": ui.render_steps(ui.describe_trace(trace)), "turns_left": max(0, s.try_max_turns - info["turns"])}

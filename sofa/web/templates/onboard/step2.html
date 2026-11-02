@@ -1,0 +1,31 @@
+{% extends "onboard/_layout.html" %}
+{% from "_ui.html" import input, select, checkbox, step_nav, card %}
+{% from "onboard/_wiz.html" import error_summary %}
+
+{% block step_body %}
+<div class="wiz">
+  {{ error_summary(errors) }}
+  <form method="post" action="/onboard/step/2" novalidate>
+    {% call card() %}
+    <div class="fields two">
+      {{ input("f-name", "Name", name="name", value=v.name, maxlength="70", required=True, error=errors.name) }}
+      {{ input("f-address", "Street", name="address", value=v.address, maxlength="70", required=True, error=errors.address) }}
+      {{ select("f-area", "Area", areas, name="area", value=v.area, error=errors.area) }}
+      {{ select("f-kind", "Kind of place", kind_options, name="kind", value=v.kind, error=errors.kind) }}
+      {{ select("f-owner", "Run by", owners, name="owner", value=v.owner, error=errors.owner) }}
+      {{ select("f-hours", "Open", hour_options, name="hours", value=v.hours, error=errors.hours) }}
+      {{ input("f-fee", "Fee in naira", name="fee", value=v.fee, inputmode="numeric", maxlength="6", required=True, error=errors.fee) }}
+      {{ input("f-wait", "Wait in minutes", name="wait", value=v.wait, inputmode="numeric", maxlength="3", required=True, error=errors.wait) }}
+    </div>
+    <fieldset class="services{% if errors.services %} has-error{% endif %}"{% if errors.services %} aria-describedby="err-services"{% endif %}>
+      <legend>Services</legend>
+      <div class="check-grid">
+        {% for name, label, text in services %}{{ checkbox("svc-" ~ loop.index, label, name="services", checked=name in v.services, value=name) }}{% endfor %}
+      </div>
+      {% if errors.services %}<p class="field-error" id="err-services" role="alert"><span>{{ errors.services }}</span></p>{% endif %}
+    </fieldset>
+    {% endcall %}
+    {{ step_nav("/onboard") }}
+  </form>
+</div>
+{% endblock %}

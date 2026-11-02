@@ -1,0 +1,43 @@
+{% extends "onboard/_layout.html" %}
+{% from "_ui.html" import page_header, notice, badge, card, input, step_nav, button %}
+{% from "_chat.html" import chat, inside %}
+{% block head_extra %}<script src="/static/try.js?v={{ asset_v() }}" defer></script>{% endblock %}
+{% block title %}{{ "Live" if live else "Go live" }}{% endblock %}
+{% block header %}{% call page_header("Live" if live else "Go live") %}{% if live %}{{ badge("Live", "success", "check") }}{{ badge("Expires " ~ expires, "neutral", "clock") }}{% if phone_on %}{{ badge("Your phone", "info", "phone") }}{% endif %}{% endif %}{% endcall %}{% endblock %}
+
+{% block step_body %}
+{% if not live %}
+<div class="wiz">
+  {% if not ok %}{{ notice("The connection has not been tested.", "danger") }}{% endif %}
+  <form method="post" action="/onboard/step/6" novalidate>
+    {% call card("Your phone") %}
+    <div class="fields two">
+      {{ input("f-phone", "Phone number", name="phone", value=typed.phone or "", type="tel", autocomplete="tel", inputmode="tel", placeholder="0803 000 0000", maxlength="20", hint="Optional. Leave empty to stay simulated.", error=errors.phone) }}
+      <div class="field">
+        <span class="field-label" aria-hidden="true">&nbsp;</span>
+        <label class="check" for="f-consent"><input type="checkbox" id="f-consent" name="consent"{% if typed.consent %} checked{% endif %}><span>Talk may text me.</span></label>
+      </div>
+    </div>
+    {% endcall %}
+    {{ step_nav("/onboard/step/5", "Go live", disabled=not ok) }}
+  </form>
+</div>
+{% else %}
+<div class="wiz">
+  {% if glimpse %}
+  {% call card("What Talk reads", id="glimpse") %}
+  <p class="glimpse">{{ glimpse.text }}</p>
+  <p class="muted small">Asked in {{ glimpse.ms }} milliseconds.</p>
+  {% endcall %}
+  {% endif %}
+  <div class="try-grid">
+    {{ chat(scripts, max_chars, test_number, pick=False, auto=True, heading="Conversation") }}
+    {{ inside() }}
+  </div>
+  <div class="form-actions">
+    {{ button("Back", "secondary", href="/onboard/step/5", icon_name="arrow-left") }}
+    {{ button("Continue", href="/onboard/step/7") }}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

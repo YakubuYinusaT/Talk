@@ -1,0 +1,58 @@
+{% extends "onboard/_layout.html" %}
+{% from "_ui.html" import page_header, button, badge, card, table, empty %}
+{% from "_trace.html" import render_steps %}
+{% block title %}Summary{% endblock %}
+{% block header %}{% call page_header("Summary") %}{{ badge("Confirmed" if confirmation else "Not confirmed", "success" if confirmation else "warning", "check" if confirmation else "clock") }}{% endcall %}{% endblock %}
+
+{% block step_body %}
+<div class="wiz-split">
+  <div class="wiz">
+    {% call card(profile.name) %}
+    <ol class="timeline">
+      {% for label, when in stamps %}<li><strong>{{ label }}</strong><span class="muted small">{{ when }}</span></li>{% endfor %}
+    </ol>
+    {% if appointments %}
+    {% call table(["Code", "When", "Visit", "Status"]) %}
+      {% for a in appointments %}<tr><td data-label="Code"><code>{{ a.code }}</code></td><td data-label="When">{{ a.when }}</td><td data-label="Visit">{{ a.visit|capitalize }}</td><td data-label="Status">{{ badge({"booked": "Booked", "confirmed": "Confirmed", "attended": "Attended", "no_show": "Did not come", "cancelled": "Cancelled"}.get(a.status, a.status), "success" if a.status in ("confirmed", "attended") else "neutral", "check" if a.status in ("confirmed", "attended") else "clock") }}</td></tr>{% endfor %}
+    {% endcall %}
+    {% endif %}
+    {% if confirmation %}
+    <div class="phone-card"><p class="head"><span>Talk</span><span>{{ confirmation.code }}</span></p><p class="bubble">{{ confirmation.text }}</p><p class="delivery">{{ confirmation.words }}</p></div>
+    {% endif %}
+    {% endcall %}
+
+    <section class="card replay" aria-labelledby="replay-title">
+      <div class="card-head"><h2 class="card-title" id="replay-title">Replay</h2><p class="count">{{ replay|length }} turn{{ "" if replay|length == 1 else "s" }}</p></div>
+      {% if replay %}
+      {% for t in replay %}
+      <details>
+        <summary><span>{{ t.call }}.{{ t.seq }} &ldquo;{{ t.said }}&rdquo;</span></summary>
+        <p class="turn-words"><strong>Talk</strong> {{ t.reply }}</p>
+        {{ render_steps(t.steps) }}
+      </details>
+      {% endfor %}
+      {% else %}
+      {{ empty("No conversation yet.", action="First visit", href="/onboard/step/7") }}
+      {% endif %}
+    </section>
+
+    <div class="form-actions">
+      {{ button("Back", "secondary", href="/onboard/step/7", icon_name="arrow-left") }}
+      <span class="spacer"></span>
+    </div>
+  </div>
+
+  <aside class="wiz-side" aria-label="Next">
+    {% call card("Next") %}
+    <div class="stack-actions">
+      {{ button("Front desk", href=desk, extra={"target": "_blank", "rel": "noopener"}) }}
+      {% if demo_page %}{{ button("Live calls", "secondary", href="/demo", extra={"target": "_blank", "rel": "noopener"}) }}{% endif %}
+      {% if try_page %}{{ button("Try it", "secondary", href="/try") }}{% endif %}
+    </div>
+    <form method="post" action="/onboard/restart" class="restart">
+      {{ button("Start another", "quiet", type="submit") }}
+    </form>
+    {% endcall %}
+  </aside>
+</div>
+{% endblock %}

@@ -1,0 +1,18 @@
+{# The few parts that the steps of the onboarding wizard share, on top of the standard components in _ui.html. Import with: {% from "onboard/_wiz.html" import error_summary, secret %} #}
+{% from "_ui.html" import notice, button, icon %}
+
+{# One line at the top of a form that was refused, so that a long page does not hide the field that needs attention. #}
+{% macro error_summary(errors) -%}
+{% if errors %}{{ notice("Please check the marked fields.", "danger") }}{% endif %}
+{%- endmacro %}
+
+{# A secret, masked, with a control that reveals it. It is the only place on any page where the secret appears, and the input keeps the markup that the tests look for. #}
+{% macro secret(id, value, label) -%}
+<div class="field">
+  <label for="{{ id }}">{{ label }}</label>
+  <div class="secret-row">
+    <input type="password" id="{{ id }}" value="{{ value }}" readonly autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true">
+    <button type="button" class="btn btn-secondary needs-js" data-reveal="{{ id }}" aria-pressed="false">Reveal</button>
+  </div>
+</div>
+{%- endmacro %}

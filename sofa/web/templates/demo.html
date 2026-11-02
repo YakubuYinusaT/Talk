@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% from "_ui.html" import page_header, stat, badge, button, checkbox, empty %}
+{% from "_trace.html" import render_steps %}
+{% block title %}Live calls{% endblock %}
+{% block description %}What Talk is doing on recent calls: the steps it took on each turn, with phone numbers masked.{% endblock %}
+{% block head %}<script src="/static/live.js?v={{ asset_v() }}" defer></script>{% endblock %}
+
+{% block body %}
+{% call page_header("Live calls", as_of()|replace("as of ", "Updated at ")) %}
+  {{ badge("Words shown" if show_calls else "Words hidden", "neutral", "eye") }}
+  {{ checkbox("auto-refresh", "Auto refresh") }}
+  {{ button("Refresh", "secondary", href="/demo", icon_name="refresh") }}
+{% endcall %}
+
+{# Only what is inside #live is replaced when the page refreshes itself, so the header and the box that was ticked stay as they are. #}
+<div id="live" class="stack-lg" data-words="{{ 'shown' if show_calls else 'hidden' }}">
+  <ul class="stats">
+    {% for label, n in stats %}{{ stat(label, n) }}{% endfor %}
+  </ul>
+
+  <div class="stack">
+    {% for c in calls %}
+    {% set newest = loop.first %}
+    <section class="card call" aria-label="Call {{ loop.index }}, {{ c.from }}">
+      <div class="card-head">
+        <h2 class="card-title data">{{ c.from }}</h2>
+        <p class="badges">
+          {% if c.onboarding %}{{ badge("Onboarding demo", "accent") }}{% elif c.typed %}{{ badge("Try it", "info") }}{% endif %}
+          {% if c.outcome %}{{ badge(c.outcome) }}{% endif %}
+        </p>
+      </div>
+      <p class="muted small call-when">{{ c.when|lagos }} Lagos</p>
+      {% for t in c.turns %}
+      <details class="turn"{% if newest and loop.last %} open{% endif %}>
+        <summary><span>Turn {{ loop.index }}</span>{% if t.action %}<span class="muted small">{{ t.action }}</span>{% endif %}{% if t.ms %}<span class="muted small num">{{ t.ms }} ms</span>{% endif %}</summary>
+        <div class="turn-body">
+          {% if show_calls %}
+          <p class="words"><span class="who">Caller</span>{{ t.said or "No speech" }}</p>
+          <p class="words"><span class="who">Talk</span>{{ t.reply or "No reply" }}</p>
+          {% endif %}
+          {% if t.steps %}{{ render_steps(t.steps) }}{% else %}<p class="muted small">No steps recorded.</p>{% endif %}
+        </div>
+      </details>
+      {% else %}<p class="muted small">No turns yet.</p>{% endfor %}
+    </section>
+    {% else %}
+    {{ empty("No calls yet.", "Call Talk or use Try it.", "Try it", "/try") if try_enabled else empty("No calls yet.", "Call Talk" ~ (" on " ~ test_number if test_number else "") ~ ".") }}
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

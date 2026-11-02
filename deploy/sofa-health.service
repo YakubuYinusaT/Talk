@@ -1,0 +1,28 @@
+# An example systemd service for Talk on a single server. Please copy it to /etc/systemd/system/sofa-health.service, and then run
+# "systemctl daemon-reload" and "systemctl enable --now sofa-health".
+#
+# The application lives in /opt/sofa-health, where src holds the code, venv holds its Python and data holds its files. It listens on port 8001 on this machine only,
+# and the web server in front of it (see deploy/nginx-talk.conf) is the only thing that is open to the internet. The scripts setup_sip.sh and setup_voice.sh expect
+# this service name, this folder, this port and a system user called sofa.
+#
+# Talk must run as exactly one process. The hospitals that visitors make in the onboarding wizard, the conversations typed on the Try it page and the streamed-call
+# agent all keep their state inside that one process, so please do not start it with several workers.
+
+[Unit]
+Description=Talk, healthcare by phone call
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=sofa
+Group=sofa
+WorkingDirectory=/opt/sofa-health/src
+# The settings are read from .env in the working directory. These two paths keep the database and every file Talk writes in the data folder, whatever .env says.
+Environment=STORAGE_DIR=/opt/sofa-health/data
+Environment=DATABASE_URL=sqlite:////opt/sofa-health/data/sofa.db
+ExecStart=/opt/sofa-health/venv/bin/uvicorn sofa.main:create_app --factory --host 127.0.0.1 --port 8001
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

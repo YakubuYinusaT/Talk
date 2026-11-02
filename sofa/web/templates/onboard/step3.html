@@ -1,0 +1,44 @@
+{% extends "onboard/_layout.html" %}
+{% from "_ui.html" import input, select, checkbox, step_nav, card, badge %}
+{% from "onboard/_wiz.html" import error_summary, secret %}
+
+{% block step_body %}
+<div class="wiz">
+  {% if saved %}<span hidden data-toast="Account created" data-toast-tone="success"></span>{% endif %}
+  {{ error_summary(errors) }}
+  <form method="post" action="/onboard/step/3" novalidate>
+    {% call card("Checklist") %}
+    <fieldset class="bare{% if errors.checklist %} has-error{% endif %}"{% if errors.checklist %} aria-describedby="err-checklist"{% endif %}>
+      <legend class="sr-only">Checklist</legend>
+      <div class="check-list">
+        {% for key, label, text in checklist %}{{ checkbox("check-" ~ key, label, name="check_" ~ key, checked=ticks[key]) }}{% endfor %}
+      </div>
+      {% if errors.checklist %}<p class="field-error" id="err-checklist" role="alert"><span>{{ errors.checklist }}</span></p>{% endif %}
+    </fieldset>
+    {% endcall %}
+
+    {% call card("Front desk") %}
+    <div class="fields two">
+      {{ input("f-assistant", "Assistant name", name="assistant_name", value=assistant_name, maxlength="50", required=True, error=errors.assistant_name) }}
+      {{ select("f-role", "Role", roles, name="role", value=assistant_role, error=errors.role) }}
+    </div>
+    {% endcall %}
+    {% if has_account %}
+    {{ step_nav("/onboard/step/2", "Save") }}
+    {% else %}
+    {{ step_nav("/onboard/step/2", "Create account") }}
+    {% endif %}
+  </form>
+
+  {% if has_account %}
+  {% call card("Account", id="account") %}
+  <dl class="facts">
+    <div><dt>Name</dt><dd>{{ profile.assistant.name }}</dd></div>
+    <div><dt>Role</dt><dd>{{ profile.assistant.role }}</dd></div>
+  </dl>
+  {{ secret("desk-key", desk_key, "Desk key") }}
+  <div class="form-actions"><span class="spacer"></span><a class="btn" href="/onboard/step/4">Continue</a></div>
+  {% endcall %}
+  {% endif %}
+</div>
+{% endblock %}

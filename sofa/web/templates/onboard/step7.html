@@ -1,0 +1,45 @@
+{% extends "onboard/_layout.html" %}
+{% from "_ui.html" import button, icon %}
+{% from "_chat.html" import chat, inside %}
+{% block head_extra %}<script src="/static/try.js?v={{ asset_v() }}" defer></script>{% endblock %}
+
+{% block step_body %}
+<div class="wiz" id="journey" data-journey-url="/onboard/api/journey" data-slug="{{ slug }}">
+  <section class="card" aria-labelledby="progress-title">
+    <div class="card-head">
+      <h2 class="card-title" id="progress-title">Progress</h2>
+      <p class="count muted small" id="journey-note" aria-live="polite"></p>
+    </div>
+    <ol class="progress-list" id="progress-list">
+      <li data-stage="booked" class="next"><span class="dot">1</span><span>Patient books</span></li>
+      <li data-stage="desk"><span class="dot">2</span><span>Visit on desk</span></li>
+      <li data-stage="confirmed"><span class="dot">3</span><span>You confirm</span></li>
+      <li data-stage="text"><span class="dot">4</span><span>Patient texted</span></li>
+    </ol>
+    <div id="text-card" hidden>
+      <div class="phone-card"><p class="head">Talk</p><p class="bubble" id="text-body"></p><p class="delivery" id="text-delivery"></p></div>
+    </div>
+  </section>
+
+  <div class="stage">
+    <div class="wiz">
+      {{ chat(scripts, max_chars, test_number, pick=False, auto=True, heading="Patient") }}
+      {{ inside() }}
+    </div>
+    <section class="card" aria-labelledby="desk-title">
+      <div class="card-head">
+        <h2 class="card-title" id="desk-title">Front desk</h2>
+        <a class="btn btn-quiet btn-sm" href="{{ desk }}" target="_blank" rel="noopener">{{ icon("external") }}Open<span class="sr-only"> in a new tab</span></a>
+      </div>
+      <iframe class="desk-frame" id="desk-frame" src="{{ embed }}" title="Front desk of {{ profile.name }}" loading="lazy"></iframe>
+    </section>
+  </div>
+
+  <div class="form-actions">
+    {{ button("Back", "secondary", href="/onboard/step/6", icon_name="arrow-left") }}
+    <span class="spacer"></span>
+    {{ button("Skip", "quiet", href="/onboard/step/8?skip=1", id="skip-link") }}
+    {{ button("Continue", href="/onboard/step/8", id="finish-link", extra={"hidden": "hidden", "aria-disabled": "true"}) }}
+  </div>
+</div>
+{% endblock %}

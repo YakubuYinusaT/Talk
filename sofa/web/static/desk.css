@@ -1,0 +1,109 @@
+/* The parts that belong only to a provider front desk. Everything shared with the rest of the site (the tokens, the buttons, the fields, the cards, the badges, the tables, the notices, the focus ring and
+   both themes) comes from ci.css, so a desk is made of the same components as every other page. The accent colour of each provider is set by an accent class on the body (see ci.css), and the
+   buttons, links and lines inside the desk follow it without any rule of their own. What is left here is the layout of the desk: the identity band, the request inbox, the day timeline and the small
+   adjustments to the shared table. */
+
+.desk .main { padding-top: 0; }
+.desk code { white-space: nowrap; }
+
+/* ---- the identity of the provider: its mark, its name, its kind of place and what the visitor may do ---- */
+.identity { background: var(--surface); border-bottom: 1px solid var(--border); border-top: 4px solid var(--accent); }
+.identity-inner { display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-4); align-items: center; padding-block: var(--space-4); }
+.mark { flex: none; display: grid; place-items: center; width: 48px; height: 48px; border-radius: var(--radius); background: var(--accent); color: var(--on-accent); }
+.mark-svg { width: 32px; height: 32px; }
+.identity-text { flex: 1 1 240px; min-width: 0; display: grid; gap: var(--space-2); }
+.identity h1 { font-size: var(--fs-xl); line-height: var(--lh-xl); max-width: none; overflow-wrap: anywhere; }
+.keyform { flex: 0 1 340px; display: flex; gap: var(--space-2); align-items: flex-start; margin: 0; }
+.keyform .field { flex: 1 1 auto; }
+.keyform .btn, .keyform button { flex: none; margin-top: 24px; }
+@media (max-width: 539px) { .keyform { flex-basis: 100%; } }
+
+/* ---- the body of the page ---- */
+.desk-body { padding-top: var(--space-5); padding-bottom: var(--space-6); }
+.toolbar { display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-5); align-items: center; justify-content: space-between; margin-bottom: var(--space-4); }
+.sections { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.sections a { display: inline-flex; align-items: center; min-height: var(--control); padding: 0 var(--space-3); border-radius: var(--radius); color: var(--text-2); font-size: var(--fs-sm); line-height: var(--lh-sm); font-weight: 600; text-decoration: none; transition: background-color var(--dur), color var(--dur); }
+.sections a:hover { background: var(--surface-2); color: var(--text); }
+.js .refresh.needs-js { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); align-items: center; }
+.refresh .check { min-height: var(--control-sm); font-size: var(--fs-sm); line-height: var(--lh-sm); }
+.refresh .updated { font-size: var(--fs-sm); line-height: var(--lh-sm); color: var(--text-3); font-variant-numeric: tabular-nums; }
+@media (max-width: 639px) { .sections { flex-wrap: nowrap; overflow-x: auto; width: 100%; scrollbar-width: none; } .sections::-webkit-scrollbar { display: none; } .sections a { flex: none; } }
+.clock { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-3); max-width: none; font-size: var(--fs-sm); line-height: var(--lh-sm); color: var(--text-3); }
+.desk .stats { margin-bottom: var(--space-5); }
+.desk .stat-value { font-size: 36px; line-height: 44px; }
+.desk-stack { display: grid; gap: var(--space-5); }
+.count { margin: 0; max-width: none; font-size: var(--fs-sm); line-height: var(--lh-sm); font-weight: 600; color: var(--text-3); }
+h3 .count { margin-left: var(--space-2); font-weight: 400; }
+.filter { display: none; margin-bottom: var(--space-4); max-width: 360px; }
+.js .filter.needs-js { display: block; }
+.refs { margin: var(--space-1) 0 0; max-width: none; font-size: var(--fs-xs); line-height: var(--lh-sm); color: var(--text-3); }
+.refs code { color: var(--text-2); }
+.desk .card > .empty { margin: 0; }
+
+/* ---- the request inbox: an urgent request cannot be missed ---- */
+ol.requests { list-style: none; margin: 0; padding: 0; max-width: none; display: grid; gap: var(--space-3); }
+.request { margin: 0; padding: var(--space-4); background: var(--surface-2); border: 1px solid var(--border); border-left: 4px solid var(--border-strong); border-radius: var(--radius); }
+.request.urgent { border-color: var(--danger); border-left-width: 8px; background: color-mix(in srgb, var(--danger) 8%, var(--surface)); }
+.request-head { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); align-items: center; margin-bottom: var(--space-2); }
+.request .age { margin-left: auto; font-size: var(--fs-sm); color: var(--text-3); }
+.said { margin: 0; max-width: 62ch; font-size: var(--fs-lg); line-height: var(--lh-lg); font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.said::before { content: "\201C"; }
+.said::after { content: "\201D"; }
+.answer { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border); }
+.answer-row { display: flex; gap: var(--space-3); flex-wrap: wrap; }
+.answer-row input { flex: 1 1 220px; min-width: 0; }
+.quick { display: none; gap: var(--space-2); flex-wrap: wrap; margin: var(--space-2) 0 0; max-width: none; }
+.js .quick.needs-js { display: flex; }
+details.answered { margin-top: var(--space-4); border-top: 1px solid var(--border); padding-top: var(--space-1); }
+ul.answered-list { list-style: none; margin: 0; padding: 0; max-width: none; }
+.answered-list li { margin: 0; padding: var(--space-3) 0; border-top: 1px solid var(--border); }
+.answered-list .said { font-size: var(--fs-md); line-height: var(--lh-md); font-weight: 400; color: var(--text-2); }
+.given { margin: var(--space-1) 0 0; color: var(--text); max-width: none; }
+
+/* ---- the appointment book: a timeline for each day ---- */
+.day { margin-bottom: var(--space-5); }
+.day:last-child { margin-bottom: 0; }
+.day h3 { padding: var(--space-2) 0; border-bottom: 2px solid var(--accent-text); font-size: var(--fs-md); line-height: var(--lh-md); }
+ol.timeline { list-style: none; margin: 0; padding: 0; max-width: none; }
+.visit { margin: 0; display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: var(--space-2) var(--space-4); align-items: start; padding: var(--space-3); border-bottom: 1px solid var(--border); border-left: 4px solid var(--accent-text); }
+.visit.attended, .visit.confirmed { border-left-color: var(--success); }
+.visit.no_show { border-left-color: var(--warning); }
+.visit.passed { background: color-mix(in srgb, var(--warning) 8%, var(--surface)); border-left-color: var(--warning); }
+.visit .time { grid-row: 1 / span 2; font-family: var(--mono); font-size: var(--fs-lg); line-height: var(--lh-lg); font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.visit .detail { grid-column: 2; grid-row: 1; min-width: 0; }
+.visit .what { margin: 0; max-width: none; color: var(--text); }
+.visit .state { grid-column: 3; grid-row: 1; }
+.visit .acts { grid-column: 2 / -1; grid-row: 2; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.visit .acts form { margin: 0; }
+@media (max-width: 599px) {
+  .visit { grid-template-columns: 56px minmax(0, 1fr); }
+  .visit .time { grid-row: 1 / span 3; }
+  .visit .state { grid-column: 2; grid-row: 2; }
+  .visit .acts { grid-column: 2; grid-row: 3; }
+}
+
+/* ---- the tables of the desk: a name with a line under it, and badges that sit side by side ---- */
+.desk .table td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.desk .table td .out { color: var(--text-3); font-weight: 600; }
+.cell { display: block; min-width: 0; text-align: left; }
+.cell .sub { display: block; font-size: var(--fs-xs); line-height: var(--lh-sm); color: var(--text-3); }
+.cell-badges { display: inline-flex; flex-wrap: wrap; gap: var(--space-1); justify-content: flex-end; }
+@media (min-width: 640px) { .cell-badges { justify-content: flex-start; } }
+
+/* ---- the patient guide ---- */
+.entries { border-top: 1px solid var(--border); }
+.entries details { border-bottom: 1px solid var(--border); }
+.entries summary { padding-block: var(--space-2); font-size: var(--fs-md); line-height: var(--lh-md); }
+.entries details p { margin: 0 0 var(--space-4); max-width: 66ch; color: var(--text-2); }
+.source { margin: var(--space-4) 0 0; max-width: none; font-size: var(--fs-sm); line-height: var(--lh-sm); color: var(--text-3); }
+#warning-signs { margin-bottom: var(--space-4); }
+
+@media print { .toolbar, .keyform, .quick, .answer, .acts { display: none !important; } .stat, .card, .request { break-inside: avoid; } }
+
+/* a desk shown inside another page (the onboarding wizard): no band, and only the work. The shell leaves out the header and the footer on its own. */
+body.desk.embedded .identity, body.desk.embedded .toolbar .sections { display: none; }
+body.desk.embedded .desk-body { padding-top: var(--space-3); }
+body.desk.embedded .stats, body.desk.embedded .clock { display: none; }
+body.desk.embedded #appointments { order: -1; }
+body.desk.embedded #places { display: none; }
+body.desk.embedded .main { padding-block: 0; }

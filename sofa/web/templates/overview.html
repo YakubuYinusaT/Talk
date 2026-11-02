@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% from "_ui.html" import page_header, button, button_group, icon %}
+{% block title %}Home{% endblock %}
+
+{% block body %}
+{# The home page is a front door and nothing more: the headline, the three ways in, and one row of what a caller can do. Everything that explains how it works lives on its own page. #}
+<div class="home">
+  {{ page_header("Talk: Helping you access essential services, from the phone people already have.", "No smartphone, app or data needed.", large=True) }}
+
+  {% call button_group() %}
+    {% if test_number %}{{ button("Call " ~ test_number, "primary", href="tel:" ~ test_number|replace(" ", ""), icon_name="phone") }}{% endif %}
+    {% if try_enabled %}{{ button("Try it", "primary" if not test_number else "secondary", href="/try", icon_name="arrow-right") }}{% endif %}
+    {% if onboard_enabled %}{{ button("Onboard a hospital", "secondary", href="/onboard") }}{% endif %}
+  {% endcall %}
+
+  <ul class="cues" aria-label="What a caller can do">
+    <li>{{ icon("search") }}<span>Find care nearby</span></li>
+    <li>{{ icon("clock") }}<span>Book or cancel visits</span></li>
+    <li>{{ icon("check") }}<span>Check medicine stock</span></li>
+    <li>{{ icon("question") }}<span>Ask the patient guide</span></li>
+    <li>{{ icon("person") }}<span>Message staff</span></li>
+    <li>{{ icon("siren") }}<span>Emergency: 112 first</span></li>
+  </ul>
+
+  <p class="muted small home-note"><a href="/overview/technology">How it works</a>{% if contact_email %} &middot; <a href="mailto:{{ contact_email }}">{{ contact_email }}</a>{% endif %}{% if cost_note %} &middot; {{ cost_note }}{% endif %}</p>
+</div>
+{% endblock %}

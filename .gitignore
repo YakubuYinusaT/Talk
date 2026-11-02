@@ -1,0 +1,17 @@
+# The settings file holds keys and secrets, so it is never committed. The file .env.example shows what it should contain.
+.env
+
+# Everything Talk writes while it runs stays out of the repository: the database, the provider records, the recordings and the voice files.
+data/
+recordings/
+*.db
+*.db-wal
+*.db-shm
+
+# These are made by Python and by the tests.
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/

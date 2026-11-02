@@ -1,0 +1,53 @@
+{% extends "onboard/_layout.html" %}
+{% from "_ui.html" import notice, button, badge, card, step_nav, icon %}
+{% from "onboard/_wiz.html" import secret %}
+
+{% block step_body %}
+<div class="wiz">
+  {% if errors.connection %}{{ notice(errors.connection, "danger") }}{% endif %}
+
+  {% if not connected %}
+  <form method="post" action="/onboard/step/5">
+    <input type="hidden" name="action" value="connect">
+    {% call card("Connection") %}<p class="muted">Not created yet.</p>{% endcall %}
+    {{ step_nav("/onboard/step/4", "Create connection") }}
+  </form>
+  {% else %}
+  {% call card("Connection") %}
+  <dl class="facts">
+    <div><dt>Name in Talk</dt><dd><code>{{ domain }}</code></dd></div>
+    <div><dt>Address</dt><dd><code>{{ endpoint }}</code></dd></div>
+    <div><dt>Signing</dt><dd>HMAC-SHA256</dd></div>
+  </dl>
+  {{ secret("signing-secret", signing_secret, "Signing secret") }}
+  {% endcall %}
+
+  <form method="post" action="/onboard/step/5" id="test">
+    <input type="hidden" name="action" value="test">
+    {% call card("Test") %}
+    {% if connection %}
+    <div class="result" tabindex="-1" id="result" role="status" aria-live="polite">
+      {{ notice("Connection works.", "success") if ok else notice("Connection failed.", "danger") }}
+      <ul class="checks">
+        {% for c in connection.checks %}
+        <li class="check-result">
+          <span class="check-head">{{ badge("Passed", "success", "check") if c.ok else badge("Failed", "danger", "cross") }}<strong>{{ c.title }}</strong></span>
+          <span class="muted small">{{ c.text }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+    <div class="btn-group">
+      <button class="btn{{ ' btn-secondary' if connection }}" type="submit" data-busy="Testing">{{ "Test again" if connection else "Test connection" }}</button>
+    </div>
+    {% endcall %}
+  </form>
+
+  <form method="post" action="/onboard/step/5" aria-label="Continue">
+    <input type="hidden" name="action" value="continue">
+    {{ step_nav("/onboard/step/4", "Continue", disabled=not ok) }}
+  </form>
+  {% endif %}
+</div>
+{% endblock %}

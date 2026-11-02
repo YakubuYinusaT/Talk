@@ -1,0 +1,13 @@
+# Settings, with their keys, and anything Talk writes while it runs must never be copied into an image.
+.env
+data/
+recordings/
+
+# Version control, caches and the files of the server setup are not needed to run the application.
+.git/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+deploy/
+docs/

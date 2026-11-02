@@ -1,0 +1,40 @@
+{# The trace: the steps Talk took for one reply, so that a visitor can see the model working. Each step has a name, one line, and a small line of facts such as the model and the time it took.
+   The steps come from sofa/web/ui.py (describe_trace). The Try it page, the Live calls page and the onboarding wizard all show the same trace in the same way. #}
+
+{# The steps as a compact list. The Try it page also receives this as HTML from the server (ui.render_steps), so the macro must stay free of anything that needs a request. #}
+{% macro render_steps(steps) -%}
+{% if steps %}
+<ol class="trace">
+  {% for s in steps %}
+  <li class="trace-step trace-{{ s.kind }}"{% if s.at is not none %} title="{{ s.at|int }} ms into the turn"{% endif %}>
+    <span class="trace-name">{{ s.title }}</span>
+    <div class="trace-body">
+      {% if s.text %}<p class="trace-line">{{ s.text }}</p>{% endif %}
+      {% if s.rows %}
+      <ul class="trace-asks">
+        {% for r in s.rows %}
+        <li>
+          <span class="ask-who">{% if r.desk %}<a href="{{ r.desk }}" target="_blank" rel="noopener">{{ r.provider }}<span class="sr-only"> (opens in a new tab)</span></a>{% else %}{{ r.provider }}{% endif %}<span class="ask-op">{{ r.op }}</span></span>
+          <span class="ask-ms">{{ r.ms }}</span>
+          <span class="ask-result">{% if not r.ok %}<span class="badge is-danger">Problem</span> {% endif %}{{ r.result }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% if s.meta or s.link %}
+      <p class="trace-meta">{{ s.meta }}{% if s.meta and s.link %} &middot; {% endif %}{% if s.link %}<a href="{{ s.link.href }}" target="_blank" rel="noopener">{{ s.link.label }}<span class="sr-only"> (opens in a new tab)</span></a>{% endif %}</p>
+      {% endif %}
+    </div>
+  </li>
+  {% endfor %}
+</ol>
+{% else %}<p class="muted small">No steps were recorded.</p>{% endif %}
+{%- endmacro %}
+
+{# The panel that holds the trace on a page. Its body starts as one line of text and is replaced with the steps of each new reply, so the line says what to do next. #}
+{% macro trace_panel(title="Trace", id="inside", empty="Send a message to see the steps.", sticky=False) -%}
+<section class="card trace-panel{% if sticky %} is-sticky{% endif %}" aria-labelledby="{{ id }}-title">
+  <div class="card-head"><h2 class="card-title" id="{{ id }}-title">{{ title }}</h2></div>
+  <div id="{{ id }}" aria-live="polite"><p class="muted small">{{ empty }}</p></div>
+</section>
+{%- endmacro %}

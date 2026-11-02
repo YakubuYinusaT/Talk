@@ -1,0 +1,48 @@
+{# The conversation with Talk, and the panel that shows the steps behind each reply. Used by the Try it page and by the onboarding wizard, and driven by try.js.
+   `pick` shows the list of ready-made conversations to choose from; without it, a single conversation is chosen for the visitor (`auto`) and its sentences are shown at once.
+   The ids in this file (try-app, log, status, say-form, say, send, restart, script-panel, script-lines, script-next, script-note, scripts-data) are the ones try.js looks for. #}
+{% from "_ui.html" import button, notice %}
+{% from "_trace.html" import trace_panel %}
+
+{% macro chat(scripts, max_chars, test_number="", pick=True, auto=False, heading="Conversation") %}
+<section class="chat" aria-labelledby="chat-title">
+  <div class="card-head">
+    <h2 class="card-title" id="chat-title">{{ heading }}</h2>
+    <button type="button" class="btn btn-quiet btn-sm needs-js" id="restart">Start over</button>
+  </div>
+  <noscript>{{ notice("JavaScript is needed to chat." ~ (" You can call " ~ test_number ~ " instead." if test_number else ""), "warning") }}</noscript>
+  <div class="needs-js" id="try-app" data-autoselect="{{ 'true' if auto else 'false' }}">
+    {% if pick %}
+    <div class="scripts-block">
+      <h3 class="scripts-label" id="scripts-title">Examples</h3>
+      <div class="scripts" role="group" aria-labelledby="scripts-title">
+        {% for s in scripts %}<button type="button" class="btn btn-secondary btn-sm script-pick" data-script="{{ loop.index0 }}" aria-pressed="false" disabled>{{ s.title }}</button>{% endfor %}
+      </div>
+    </div>
+    {% endif %}
+    <section class="script-panel" id="script-panel" aria-labelledby="script-name" hidden>
+      <div class="card-head">
+        <h3 class="script-name" id="script-name"></h3>
+        <div class="row">
+          <span class="muted small" id="script-note" aria-live="polite"></span>
+          <button type="button" class="btn-sm" id="script-next" disabled>Send next line</button>
+        </div>
+      </div>
+      <ol class="script-lines" id="script-lines"></ol>
+    </section>
+    <div class="log" id="log" role="log" aria-live="polite" aria-label="Conversation with Talk"></div>
+    <p class="status" id="status" aria-live="polite"></p>
+    <form id="say-form" class="send" autocomplete="off">
+      <div class="field">
+        <label for="say">Message</label>
+        <input type="text" id="say" name="say" maxlength="{{ max_chars }}" placeholder="Type a message" disabled>
+      </div>
+      <button type="submit" id="send" disabled>Send</button>
+    </form>
+    <script type="application/json" id="scripts-data">{{ scripts|tojson }}</script>
+  </div>
+</section>
+{% endmacro %}
+
+{# The panel of steps beside the conversation. The id stays "inside" because try.js writes each reply's steps into it. The wizard passes its own first line. #}
+{% macro inside(intro="Send a message to see the steps.") %}{{ trace_panel("Trace", "inside", intro, sticky=True) }}{% endmacro %}

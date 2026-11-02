@@ -1,0 +1,31 @@
+# A local stack for Talk: the application, with the four simulated provider systems inside it, and a stand-in for the Meta models.
+#
+# Please start it with "docker compose up --build" and open http://localhost:8000. The stand-in answers by simple rules, so the stack runs without a Meta key.
+# To use Meta's models instead, please put LLM_API_KEY in .env and delete the three lines below that point LLM_URL, ASR_URL and LLM_PROVIDER at the stand-in.
+services:
+  model-mock:
+    build: .
+    command: uvicorn mocks.model_mock:app --host 0.0.0.0 --port 9000
+    ports: ["127.0.0.1:9000:9000"]
+
+  api:
+    build: .
+    # The settings in .env are optional here. The values below always win over them, so that this stack never reaches out to a service by accident.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: sqlite:////app/data/sofa.db
+      STORAGE_DIR: /app/data
+      SERVICES_ENABLED: health
+      # The four simulated providers are reached over http at the application's own address, because there is no public https address on a local machine.
+      SYNTHETIC_HOSPITAL: "true"
+      HOSPITAL_BASE_URL: http://127.0.0.1:8000/synthetic
+      LLM_PROVIDER: meta
+      LLM_URL: http://model-mock:9000
+      ASR_URL: http://model-mock:9000
+      # The voice is a silent stand-in, so that no voice service is needed. Please set TTS_PROVIDER and its key in .env to hear Talk speak.
+      TTS_PROVIDER: standin
+    volumes: ["./data:/app/data"]
+    ports: ["8000:8000"]
+    depends_on: [model-mock]

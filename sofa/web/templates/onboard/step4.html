@@ -1,0 +1,65 @@
+{% extends "onboard/_layout.html" %}
+{% from "_ui.html" import input, select, textarea, checkbox, step_nav, card %}
+{% from "onboard/_wiz.html" import error_summary %}
+
+{% block step_body %}
+<div class="wiz-split">
+  <form method="post" action="/onboard/step/4" id="information-form" data-preview-url="/onboard/step/4/preview" class="wiz" novalidate aria-label="Records">
+    {{ error_summary(errors) }}
+
+    {% call card("Schedule") %}
+    {% if errors.schedule %}<p class="field-error" role="alert"><span>{{ errors.schedule }}</span></p>{% endif %}
+    <div class="table-wrap"><table class="table schedule">
+      <caption class="sr-only">Opening hours for each day</caption>
+      <thead><tr><th scope="col">Day</th><th scope="col">Opens</th><th scope="col">Closes</th><th scope="col">Closed</th></tr></thead>
+      <tbody>
+        {% for day in weekdays %}
+        {% set span = profile.schedule[loop.index0] %}
+        <tr>
+          <td data-label="Day"><strong>{{ day }}</strong></td>
+          <td data-label="Opens"><label class="sr-only" for="open-{{ loop.index0 }}">{{ day }}, opens</label>
+            <select id="open-{{ loop.index0 }}" name="open_{{ loop.index0 }}">{% for h in range(0, 24) %}<option value="{{ h }}"{% if span and span[0] == h or not span and h == 8 %} selected{% endif %}>{{ "%02d:00"|format(h) }}</option>{% endfor %}</select></td>
+          <td data-label="Closes"><label class="sr-only" for="close-{{ loop.index0 }}">{{ day }}, closes</label>
+            <select id="close-{{ loop.index0 }}" name="close_{{ loop.index0 }}">{% for h in range(1, 25) %}<option value="{{ h }}"{% if span and span[1] == h or not span and h == 17 %} selected{% endif %}>{{ "%02d:00"|format(h) }}</option>{% endfor %}</select></td>
+          <td data-label="Closed"><label class="check" for="closed-{{ loop.index0 }}"><input type="checkbox" id="closed-{{ loop.index0 }}" name="closed_{{ loop.index0 }}"{% if not span %} checked{% endif %}><span class="sr-only">{{ day }}, </span><span>Closed</span></label></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+    <div class="fields two schedule-extras">
+      {{ select("f-capacity", "Patients per slot", capacities, name="capacity", value=profile.capacity, error=errors.capacity) }}
+      <div class="field">
+        <span class="field-label" aria-hidden="true">&nbsp;</span>
+        <label class="check" for="f-samples"><input type="checkbox" id="f-samples" name="samples"{% if profile.samples %} checked{% endif %}{% if provider_ready %} disabled{% endif %}><span>Add {{ samples }} sample visits</span></label>
+      </div>
+    </div>
+    {% endcall %}
+
+    {% call card("Patient guide") %}
+    {% if errors.guide %}<p class="field-error" role="alert"><span>{{ errors.guide }}</span></p>{% endif %}
+    <div class="entries">
+      {% for e in entries %}
+      {% set i = loop.index0 %}
+      <div class="entry" role="group" aria-label="Entry {{ loop.index }}">
+        {{ input("title-" ~ i, "Title", name="title_" ~ i, value=e.title, maxlength="80") }}
+        {{ textarea("answer-" ~ i, "Answer", name="answer_" ~ i, value=e.answer, rows=3, maxlength="420", error=errors.get("guide_" ~ i)) }}
+        <input type="hidden" name="keywords_{{ i }}" value="{{ e.keywords }}">
+      </div>
+      {% endfor %}
+    </div>
+    {% endcall %}
+
+    {% call card("Warning signs") %}
+    {{ textarea("f-warning", "Spoken text", name="warning", value=profile.warning, rows=4, maxlength="420", hint="Talk reads this aloud, word for word.", error=errors.warning) }}
+    {% endcall %}
+
+    {{ step_nav("/onboard/step/3") }}
+  </form>
+
+  <aside class="wiz-side" aria-label="Preview">
+    {% call card("Preview") %}
+    <div id="preview" aria-live="polite" aria-busy="false">{% include "onboard/_preview.html" %}</div>
+    {% endcall %}
+  </aside>
+</div>
+{% endblock %}

@@ -1,0 +1,14 @@
+{# The page of one step of the onboarding wizard: the title, the stepper and the body of the step. A step extends this and fills the step_body block, wrapped in a div of class "wiz" (a single
+   narrow column) or "wiz-split" (the form beside a side panel). The accent of the hospital's template colours the buttons and the current step. #}
+{% extends "base.html" %}
+{% from "_ui.html" import page_header, stepper %}
+{% block title %}{{ title }}{% endblock %}
+{% block description %}Make a simulated hospital, connect it to Talk and receive its first appointment.{% endblock %}
+{% block body_class %}onboard accent-{{ accent }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/onboard.css?v={{ asset_v() }}"><script src="/static/onboard.js?v={{ asset_v() }}" defer></script>{% block head_extra %}{% endblock %}{% endblock %}
+
+{% block body %}
+{% block header %}{{ page_header(title) }}{% endblock %}
+{{ stepper(steps, step, "Onboarding progress") }}
+{% block step_body %}{% endblock %}
+{% endblock %}

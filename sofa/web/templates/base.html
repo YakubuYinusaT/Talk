@@ -1,0 +1,58 @@
+{# The shell that every page of the site and every front desk is built in: the header with the five pages and the theme button, the main area, and the footer that carries the
+   one disclosure that the data is simulated. A page fills the blocks below. Blocks:
+     title       the document title, one to four words; the site name is added after it
+     description the text search engines show
+     head        extra stylesheets and scripts for this page
+     body_class  classes for the body, for example an accent: "accent-green"
+     main        the whole main area, when a page needs full-width sections (the default wraps the body in the page container)
+     body        the content, placed inside the page container
+   A page can also set nav_current to the label of the menu item it belongs to when its address does not say so, and embedded=true to leave out the header and footer, which is how a
+   front desk is shown inside another page. #}
+{% from "_ui.html" import icon, sim_chip %}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Home{% endblock %} | Talk</title>
+<meta name="description" content="{% block description %}Talk helps people in Lagos reach healthcare by phone: find a clinic, book a visit, check a medicine and ask a question.{% endblock %}">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="/static/ci-mark-red.png" type="image/png">
+<link rel="preload" href="/static/fonts/poppins-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/static/fonts/poppins-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/static/ci.css?v={{ asset_v() }}">
+<script>try{var t=localStorage.getItem("ci-theme");if(t==="light"||t==="dark"){document.documentElement.setAttribute("data-theme",t)}}catch(e){}document.documentElement.classList.add("js")</script>
+<script src="/static/ci.js?v={{ asset_v() }}" defer></script>
+{% block head %}{% endblock %}
+</head>
+<body class="{% block body_class %}{% endblock %}">
+<a class="skip-link" href="#main">Skip to content</a>
+{% if not embedded %}
+<header class="site-header">
+  <div class="page header-inner">
+    <a class="brand" href="{{ home_url }}" aria-label="Talk, home"><img src="/static/ci-mark-red.png" width="48" height="24" alt=""><span>Talk</span></a>
+    <nav class="nav" aria-label="Main">
+      {% for label, href, here in site_nav(request, nav_current|default("")) %}<a href="{{ href }}"{% if here %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
+    </nav>
+    <div class="header-tools">
+      <button class="icon-btn theme-btn" type="button" data-theme-toggle aria-pressed="false" aria-label="Dark theme"><span class="i-sun">{{ icon("sun") }}</span><span class="i-moon">{{ icon("moon") }}</span></button>
+    </div>
+  </div>
+</header>
+{% endif %}
+<main id="main" class="main" tabindex="-1">
+  {# Transitional: a page that has not yet moved to page_header still fills this block. It is deleted when no page does. #}
+  {% block hero %}{% endblock %}
+  {% block main %}<div class="page">{% block body %}{% endblock %}</div>{% endblock %}
+</main>
+{% if not embedded %}
+<footer class="site-footer">
+  <div class="page footer-inner">
+    <p>Talk by Connected Intelligence</p>
+    {{ sim_chip() }}
+  </div>
+</footer>
+{% endif %}
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+</body>
+</html>
