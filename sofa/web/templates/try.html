@@ -2,13 +2,13 @@
 {% from "_ui.html" import page_header %}
 {% from "_chat.html" import chat, inside %}
 {% block title %}Try it{% endblock %}
-{% block description %}Chat with Talk in your browser and see what the language model understood and which providers Talk asked, step by step.{% endblock %}
+{% block description %}Call or chat with Talk in your browser and see what the language model understood and which providers Talk asked, step by step.{% endblock %}
 {% block head %}<script src="/static/try.js?v={{ asset_v() }}" defer></script>{% endblock %}
 
 {% block body %}
 {{ page_header("Try it") }}
 <div class="try-grid">
-  {{ chat(scripts, max_chars, test_number) }}
+  {{ chat(scripts, max_chars, test_number, modes=True, numbers=numbers) }}
   {{ inside() }}
 </div>
 {% endblock %}

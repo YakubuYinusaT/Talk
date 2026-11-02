@@ -69,6 +69,24 @@
 
       <div class="desk-stack">
 
+        {# ---- emergency places held for callers who could not reach 112: always first ---- #}
+        {% if rooms %}
+        <section class="card emergency-card{% if holds %} has-holds{% endif %}" id="emergency" aria-labelledby="emergency-title">
+          <div class="card-head">
+            <h2 class="card-title" id="emergency-title" tabindex="-1">Emergency places</h2>
+            <p class="count">{% for r in rooms %}{{ r.place }}: {{ r.free }} of {{ r.places }} free{{ " · " if not loop.last }}{% endfor %}</p>
+          </div>
+          {% if holds %}
+          <ol class="holds">
+            {% for h in holds %}
+            <li class="hold" id="hold-{{ h.code }}">{{ badge("Held", "danger", "warn") }} <strong>{{ h.code }}</strong> <span>{{ h.place }}</span>
+              <span class="age">{{ h.age }} · until {{ h.until }}</span></li>
+            {% endfor %}
+          </ol>
+          {% else %}{{ empty("No places held") }}{% endif %}
+        </section>
+        {% endif %}
+
         {# ---- the request inbox: urgent first ---- #}
         <section class="card" id="requests" aria-labelledby="requests-title">
           <div class="card-head">

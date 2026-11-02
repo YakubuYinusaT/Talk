@@ -12,7 +12,7 @@ from .config import Settings, get_settings
 from .container import build_services
 from .db import init_db, make_engine, make_session_factory
 from .hardening import replace_known_defaults
-from .routes import demo, onboard, overview, tryit, voice
+from .routes import demo, onboard, overview, tryit, twilio, voice
 
 
 def voice_in_use(settings: Settings) -> str:
@@ -66,6 +66,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.svc = svc
     app.state.engine = engine
     app.include_router(voice.router)
+    app.include_router(twilio.router)
     app.include_router(overview.router)
     app.include_router(demo.router)
     app.include_router(tryit.router)

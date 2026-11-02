@@ -22,7 +22,7 @@ BOOK_THE_PRIVATE_CLINIC = ["Please help me find the nearest clinic for antenatal
                            "Yes, please go ahead."]
 EMERGENCY = "Please, my brother is not breathing, we are in Ikeja."
 ASK_ABOUT_PARKING = "Please ask the cancer centre about parking."
-KNOWN_STEPS = ["heard", "understood", "read", "asked", "booked", "request", "replied"]
+KNOWN_STEPS = ["heard", "urgency", "understood", "meant", "read", "travel", "held", "asked", "booked", "request", "replied"]
 
 
 def start(client, **headers):
@@ -213,7 +213,8 @@ def test_a_booking_made_here_is_cancelled_in_the_providers_book_when_the_visitor
 def test_an_emergency_typed_here_gives_112_first_and_files_an_urgent_request_on_the_nearest_desk_without_any_phone_number(client, happ, hdb):
     _, answers = converse(client, [EMERGENCY])
     body = answers[0]
-    assert body["reply"].startswith("If this is an emergency, please call 112 now.")
+    assert "call 112 now" in body["reply"].split(". ")[0]
+    assert any(step["step"] == "urgency" and step["level"] == "emergency" for step in body["trace"])
     filed = next(step for step in body["trace"] if step["step"] == "request")
     assert filed["kind"] == "emergency" and filed["urgent"] is True and re.fullmatch(r"REQ-[A-Z0-9]{4}", filed["code"])
     assert "Request filed" in body["steps_html"] and "marked urgent" in body["steps_html"]

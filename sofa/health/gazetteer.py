@@ -11,11 +11,8 @@ from . import data
 from .when import words
 
 EMERGENCY_NUMBER = "112"
-RED_FLAGS = ("not breathing", "cannot breathe", "can't breathe", "cant breathe", "unconscious", "collapsed", "heavy bleeding", "bleeding heavily", "bleeding a lot",
-             "seizure", "convulsion", "chest pain", "poison", "accident", "stroke", "snake", "burnt badly", "choking")
 # a closed list of what a caller may need: the model picks one of these by meaning, the keywords are the fallback when it cannot be asked
 NEEDS = (
-    ("emergency care", ("emergency", "urgent", "accident")),
     (data.ONCOLOGY, ("cancer", "chemo", "chemotherapy", "radiotherapy", "oncology", "oncologist", "tumour", "tumor")),
     ("pharmacy", ("pharmacy", "chemist", "drug store", "buy medicine", "buy drugs")),
     (data.ANTENATAL, ("antenatal", "ante natal", "pregnant", "pregnancy", "prenatal", "maternity")),
@@ -26,6 +23,20 @@ NEEDS = (
     (data.GENERAL, ("see a doctor", "consultation", "check up", "checkup", "sick", "not feeling well", "fever")),
 )
 NEED_CHOICES = [need for need, _ in NEEDS]
+
+
+# What a caller says when they tell Talk where THEY are, as opposed to naming a place to look in ("a clinic in Yaba") or a place that has an area in its name.
+SELF_LOCATION = re.compile(r"\b(i am|i m|im|we are|we re|i live|we live|i stay|we stay|i dey|we dey|staying|living|my house|my home|our house|"
+                           r"coming from|travelling from|traveling from|leaving from|i will come from|i ll come from|i am at|right now)\b")
+
+
+def caller_location(text: str) -> data.Area | None:
+    """The area the caller says they are in or will travel from ("I am in Surulere", "I will be coming from Ikorodu"), or None when the caller has not said
+    where they are. An area that is only part of a request ("a clinic in Yaba", "Ikeja Allen Medical Centre") is not where the caller is."""
+    said = " ".join(words(text))
+    if not SELF_LOCATION.search(said):
+        return None
+    return match_area(text)
 
 
 def match_area(text: str) -> data.Area | None:
@@ -70,6 +81,3 @@ def match_drug(text: str) -> str | None:
     return None
 
 
-def has_red_flag(text: str) -> bool:
-    said = " ".join(words(text))
-    return any(flag in said for flag in RED_FLAGS)

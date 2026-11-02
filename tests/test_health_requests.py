@@ -94,7 +94,7 @@ def test_a_question_the_guide_does_not_cover_appears_on_the_centres_front_desk_w
 
 def test_an_emergency_is_flagged_urgent_to_the_nearest_emergency_care_and_the_reply_is_unchanged_in_what_matters(client, happ, hdb):
     replies = call(client, EMERGENCY_IN_IKEJA)
-    assert "112" in replies[1] and "I have also informed Ikeja Heights General Hospital" in replies[1]
+    assert "112" in replies[1] and "Ikeja Heights General Hospital" in replies[1] and "I have told their team about you" in replies[1]
     urgent = [r for r in all_requests(happ) if r["kind"] == "emergency"]
     assert len(urgent) == 1 and urgent[0]["urgent"] and "not breathing" in urgent[0]["summary"] and "Ikeja" in urgent[0]["summary"]
     assert hdb.scalar(select(HealthRequest)).urgent is True

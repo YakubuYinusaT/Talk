@@ -16,6 +16,7 @@
       {{ select("f-hours", "Open", hour_options, name="hours", value=v.hours, error=errors.hours) }}
       {{ input("f-fee", "Fee in naira", name="fee", value=v.fee, inputmode="numeric", maxlength="6", required=True, error=errors.fee) }}
       {{ input("f-wait", "Wait in minutes", name="wait", value=v.wait, inputmode="numeric", maxlength="3", required=True, error=errors.wait) }}
+      {{ input("f-emergency", "Emergency places", name="emergency_places", value=v.emergency_places if v.emergency_places is not none else 0, inputmode="numeric", maxlength="2", error=errors.emergency_places) }}
     </div>
     <fieldset class="services{% if errors.services %} has-error{% endif %}"{% if errors.services %} aria-describedby="err-services"{% endif %}>
       <legend>Services</legend>

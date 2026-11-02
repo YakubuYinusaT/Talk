@@ -1,7 +1,7 @@
 """One model call per turn that works out everything the caller meant.
 
-Callers speak English. The model is shown the registered tools and where the conversation is, and returns one structured answer: what the caller wants (a single
-`action`) and whether they answered a question Talk had just asked. The backend then validates that answer against the tool registry and runs it. The model decides what was meant; it never supplies a fact.
+Callers speak English. The model is shown the registered tools and where the conversation is, and returns one structured answer: whether anyone may be in danger
+(`urgency`), what the caller wants (a single `action`) and whether they answered a question Talk had just asked. The backend then validates that answer against the tool registry and runs it. The model decides what was meant; it never supplies a fact.
 
 What testing the models taught us (docs/model_log.md):
   * every field must be REQUIRED in the answer format, or the model skips most of them;
@@ -15,10 +15,12 @@ import json
 from pydantic import BaseModel, model_validator
 
 SPECIAL = ["chat", "human", "unclear"]
-CORE_FIELDS = ["action", "answer"]
+CORE_FIELDS = ["urgency", "action", "answer"]
+URGENCY = ["none", "possible", "emergency"]
 
 
 class Understanding(BaseModel):
+    urgency: str = "none"     # none | possible | emergency: read by meaning, in any words, on every turn
     action: str = "unclear"   # a registered tool id (health.find_facility ...), or chat | human | unclear
     answer: str | None = None  # yes | no | other: only when Talk had just asked a question
     # worked out from `action`, never asked of the model:
@@ -29,6 +31,8 @@ class Understanding(BaseModel):
     def _derive(self):
         if self.answer in ("none", ""):
             self.answer = None
+        if self.urgency not in URGENCY:
+            self.urgency = "none"
         self.rederive()
         return self
 
@@ -55,11 +59,12 @@ def schema(tool_ids: list[str], domains: list[str] | tuple = ()) -> dict:
     wire = {name: props[name] for name in CORE_FIELDS}
     wire["action"] = {"enum": [*tool_ids, *SPECIAL, *[d for d in domains if d not in SPECIAL]], "type": "string"}
     wire["answer"] = {"enum": ["yes", "no", "none"], "type": "string"}
+    wire["urgency"] = {"enum": URGENCY, "type": "string"}
     return {"type": "object", "properties": wire, "required": list(wire), "additionalProperties": False}
 
 
-def _example(action: str, said: str, *, answer: str = "none", asked: str | None = None, progress: str | None = None) -> str:
-    row = {"action": action, "answer": answer}
+def _example(action: str, said: str, *, answer: str = "none", asked: str | None = None, progress: str | None = None, urgency: str = "none") -> str:
+    row = {"urgency": urgency, "action": action, "answer": answer}
     context = ""
     if asked:
         context = f'  (Talk had just asked: "{asked}"' + (f"; the request in progress is {progress}" if progress else "") + ")"
@@ -88,6 +93,13 @@ EXAMPLES = "\n".join([
     _example("chat", "Good morning."),
     _example("chat", "Thank you very much."),
     _example("human", "May I speak to a person, please?"),
+    # urgency is read by meaning, whoever is in danger and however it is said, and a figure of speech or a danger that is over is not one
+    _example("health.find_facility", "Please come quickly, my wife is lying on the floor and she will not answer me.", urgency="emergency"),
+    _example("health.find_facility", "My little boy swallowed a battery a few minutes ago.", urgency="emergency"),
+    _example("health.find_facility", "Something bit my leg in the bush and now it is swelling up fast.", urgency="emergency"),
+    _example("health.book_appointment", "I want to see a doctor about my chest, it has been tight for some days.", urgency="possible"),
+    _example("health.book_appointment", "I am not bleeding, I only want a check-up, please.", urgency="none"),
+    _example("health.find_facility", "I am dying of hunger, please find me a pharmacy.", urgency="none"),
     # answering a question Talk just asked: an area, a choice or a day and time belongs to the request in progress
     _example("health.find_facility", "I am in Surulere.", asked=_AREA, progress="health.find_facility"),
     _example("health.find_facility", "Surulere, please.", asked=_AREA, progress="health.find_facility"),
@@ -123,6 +135,13 @@ def build(st: dict, services=()) -> str:
         "English. Work out what the caller means and answer with JSON only, with every field present.\n"
         "Callers are polite and speak in full sentences, with words such as hello, please and could you around the request. Those words are never the request: look for "
         "what the caller actually wants.\n"
+        "urgency: none, possible or emergency, judged by meaning in any words: plain English, Nigerian English, Pidgin, and words the speech recogniser may have "
+        "spelled wrongly. emergency: a person, the caller or someone else, may be in danger of death or serious harm now, for example not breathing or struggling to "
+        "breathe, not waking or not responding, collapsed, a fit, heavy bleeding, choking, poisoning, a bite or sting with fast swelling, chest pain with trouble "
+        "breathing, a serious accident or injury, a birth that is happening now, or a person who says they want to harm themselves. possible: it might be one of "
+        "those, or the caller is unsure, or asks about emergency care or the emergency number. none: everything else, including a person who says nobody is in "
+        "danger, something that is over, a check-up or an appointment, and a figure of speech such as I am dying of hunger. If you are not sure between possible and "
+        "emergency, say emergency. If you are not sure between none and possible, say possible.\n"
         "action: what the caller wants. Exactly one of:\n"
         + more +
         "- chat: only a greeting, thanks or small talk\n- human: asks for a person\n- unclear: none of the above, or only a yes or no\n"

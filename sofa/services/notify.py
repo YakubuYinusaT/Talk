@@ -14,6 +14,9 @@ async def send_sms(db: Session, services, *, to: str, body: str, template: str, 
     if to.startswith(TEST_PREFIX):
         note.status, note.provider_message_id = "mock_sent", None
         return note
+    if not to.startswith("+234"):   # the text-message service reaches Nigerian numbers: a caller from abroad is never told that a text is on its way
+        note.status, note.provider_message_id = "not_sent_abroad", None
+        return note
     status, message_id = await services.sms.send(to, body)
     note.status, note.provider_message_id = status, message_id
     return note

@@ -14,7 +14,7 @@ import wave
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import Response
 
-from .rules import guide_answer, understand, wording
+from .rules import guide_answer, meaning, understand, wording
 
 app = FastAPI(title="Talk model stand-in")
 
@@ -58,6 +58,8 @@ async def chat(request: Request):
         content = json.dumps(understand(system, user))
     elif system.startswith("ANSWER"):
         content = json.dumps({"say": guide_answer(system)})
+    elif system.startswith("REPLY"):
+        content = json.dumps(meaning(user))
     elif system.startswith("WORDING"):
         content = json.dumps(wording(system))
     else:  # ARGUMENTS, CHOICE: the stand-in fills in nothing, so the service asks for each detail; tests that need a filled-in answer replace the extraction

@@ -151,6 +151,7 @@ def new_profile(template: str) -> dict:
     return {
         "name": t["name"], "area": t["area"], "owner": t["owner"], "kind": t["kind"], "address": t["address"], "fee": t["fee"], "wait": t["wait"],
         "hours_preset": t["hours"], "services": list(t["services"]), "capacity": t["capacity"],
+        "emergency_places": 2 if data.EMERGENCY in t["services"] else 0,
         "schedule": [list(span) if span else None for span in (HOURS[t["hours"]][1].get(d) for d in range(7))],
         "checklist": {key: False for key, _, _ in CHECKLIST},
         "assistant": None, "assistant_suggestion": dict(t["assistant"]),
@@ -192,6 +193,8 @@ def read_profile_form(form, profile: dict) -> tuple[dict, dict]:
         problems["kind"] = "Please choose what kind of place the hospital is, from the list."
     take("fee", lambda: number(form.get("fee"), "the consultation fee in naira", 0, 100000))
     take("wait", lambda: number(form.get("wait"), "the typical waiting time in minutes", 0, 240))
+    if form.get("emergency_places") not in (None, ""):
+        take("emergency_places", lambda: number(form.get("emergency_places"), "the number of emergency places", 0, 20))
     chosen = [s for s in form.getlist("services") if s in SERVICE_NAMES]
     if chosen:
         out["services"] = [s for s in SERVICE_NAMES if s in chosen]
@@ -284,7 +287,7 @@ def facility_of(profile: dict, slug: str) -> data.Facility:
     services = tuple(profile["services"])
     return data.Facility(
         id=slug, name=profile["name"], kind=profile["kind"], area=profile["area"], address=profile["address"], offset=OFFSET, services=services, hours=hours,
-        emergency=data.EMERGENCY in services, booking=True, base_queue=max(1, round(profile["wait"] / (MINUTES_PER_PATIENT * QUEUE_SCALE * BUSY_HOUR))) if profile["wait"] else 0,
+        emergency=data.EMERGENCY in services, emergency_places=profile.get("emergency_places", 0) if data.EMERGENCY in services else 0, booking=True, base_queue=max(1, round(profile["wait"] / (MINUTES_PER_PATIENT * QUEUE_SCALE * BUSY_HOUR))) if profile["wait"] else 0,
         minutes=MINUTES_PER_PATIENT, fee=profile["fee"], capacity=profile["capacity"], specialist=False, sms_name=profile["name"])
 
 

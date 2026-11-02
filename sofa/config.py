@@ -75,6 +75,7 @@ class Settings(BaseSettings):
     overview_enabled: bool = True
     contact_email: str = ""      # The email address that the home page shows to people who would like to ask us a question.
     test_number: str = ""        # The number that a visitor may call to try Talk on the telephone.
+    test_number_international: str = ""   # A second number for visitors outside Nigeria, for example a United States number that reaches the same Talk.
     cost_note: str = ""          # A short note, shown on the home page, about what a test call costs.
     try_page_enabled: bool = True
     try_max_turns: int = 20          # a visitor's typed conversation ends after this many turns
@@ -91,6 +92,9 @@ class Settings(BaseSettings):
     test_caller_numbers: str = "+2348000000001"
     scheduler_enabled: bool = True  # background jobs: recording clean-up and the follow-ups after a visit
     scheduler_interval_seconds: int = 60
+    # The second telephony provider, for visitors outside Nigeria (sofa/routes/twilio.py). The account key also downloads its recordings, which it protects.
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
     recording_allowed_hosts: str = "africastalking.com,at-internal.com"  # a recording is downloaded only from these hosts (and their sub-domains), over https; empty = any (not safe)
     recording_retention_days: int = 30   # a caller's recording is deleted this long after the call; 0 keeps recordings
     debug_headers: bool = True  # X-Sofa-* headers used by the call simulator
@@ -137,7 +141,8 @@ class Settings(BaseSettings):
 
     @property
     def recording_hosts(self) -> tuple[str, ...]:
-        return tuple(h.strip().lower().lstrip(".") for h in self.recording_allowed_hosts.split(",") if h.strip())
+        hosts = tuple(h.strip().lower().lstrip(".") for h in self.recording_allowed_hosts.split(",") if h.strip())
+        return hosts + ("api.twilio.com",) if self.twilio_account_sid and hosts and "api.twilio.com" not in hosts else hosts
 
 
 @lru_cache

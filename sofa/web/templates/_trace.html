@@ -32,7 +32,7 @@
 {%- endmacro %}
 
 {# The panel that holds the trace on a page. Its body starts as one line of text and is replaced with the steps of each new reply, so the line says what to do next. #}
-{% macro trace_panel(title="Trace", id="inside", empty="Send a message to see the steps.", sticky=False) -%}
+{% macro trace_panel(title="Trace", id="inside", empty="The steps behind each reply appear here.", sticky=False) -%}
 <section class="card trace-panel{% if sticky %} is-sticky{% endif %}" aria-labelledby="{{ id }}-title">
   <div class="card-head"><h2 class="card-title" id="{{ id }}-title">{{ title }}</h2></div>
   <div id="{{ id }}" aria-live="polite"><p class="muted small">{{ empty }}</p></div>

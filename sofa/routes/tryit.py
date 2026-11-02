@@ -1,19 +1,23 @@
 """Try it (/try): a visitor types to Talk in the browser and sees what happened inside each reply.
 
-It goes through the same path as a phone call (the same language model, the same front desk, the same four simulated providers), only the speech
-recognition is left out because the words are typed. Nothing leaves the page: the text message a call would send is recorded as sent without calling
+It goes through the same path as a phone call (the same language model, the same front desk, the same four simulated providers). A visitor can call
+from the browser, which also uses the same speech recognition and voice, or type, which leaves the speech out. Nothing leaves the page: the text message a call would send is recorded as sent without calling
 the text-message service, and a booking made here lands on the provider's own front desk like any other.
 
   GET  /try         the page
   POST /try/start   {} -> {"session", "greeting", ...}
   POST /try/turn    {"session", "text"} -> {"reply", "ended", "action", "trace", "steps_html", "turns_left"}
+  POST /try/speak   {"session", "audio"} -> the same, with "heard" and the "audio" of the reply: a call made from the browser, through the same speech
+                    recognition and voice as a phone call
 
 The feature is guarded because every turn costs a model call: JSON only, at most 300 characters a message, a per-network hourly limit, a limit on the
 messages in one conversation, a conversation that expires, and a cap on everything at once. Nothing it sends back holds a secret or a phone number.
 """
 
+import base64
 import logging
 import re
+from urllib.parse import urlparse
 import secrets
 import time
 from collections import deque
@@ -30,6 +34,7 @@ router = APIRouter(prefix="/try")
 templates = ui.templates
 
 MAX_CHARS = 300
+MAX_AUDIO_BYTES = 1_000_000   # about thirty seconds of the 16 kHz speech the page sends: one sentence is far shorter
 MAX_SESSIONS = 500           # conversations alive at once, across everyone
 HOUR = 3600.0
 CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
@@ -112,6 +117,7 @@ def page(request: Request, _=Depends(enabled)):
     return templates.TemplateResponse(request, "try.html", {
         "request": request, "brand": "Talk", "scripts": SCRIPTS, "max_chars": MAX_CHARS, "max_turns": s.try_max_turns, "minutes": s.try_session_minutes,
         "providers": ui.providers(), "test_number": getattr(s, "test_number", ""),
+        "numbers": [n for n in (getattr(s, "test_number", ""), getattr(s, "test_number_international", "")) if n],
     })
 
 
@@ -144,27 +150,29 @@ async def start(request: Request, _=Depends(enabled)):
         return refuse(502, "Talk could not start. Please try again.")
     starts.append(t)
     st["sessions"][session] = {"created": t, "turns": 0, "ended": False, "busy": False}
-    return {"session": session, "greeting": ui.scrub(greeting), "max_turns": s.try_max_turns, "minutes": s.try_session_minutes}
+    out = {"session": session, "greeting": ui.scrub(greeting), "max_turns": s.try_max_turns, "minutes": s.try_session_minutes}
+    if body.get("mode") == "call":
+        try:
+            out["audio"] = [path_of((await svc.audio.speak(greeting, voice.LANG))[0])]
+        except Exception:
+            log.exception("the greeting could not be voiced")
+            out["audio"] = []
+        out["voice"] = getattr(svc.tts, "tag", "")
+    return out
 
 
-@router.post("/turn")
-async def turn(request: Request, _=Depends(enabled)):
-    svc = request.app.state.svc
-    s = svc.settings
-    body = await body_of(request)
-    if isinstance(body, JSONResponse):
-        return body
-    session, text = body.get("session"), body.get("text")
-    if not isinstance(session, str) or not isinstance(text, str):
-        return refuse(400, "Send the session and the text.")
-    text = CONTROL.sub("", text).strip()
-    if not text:
-        return refuse(400, "Please type a message.")
-    if len(text) > MAX_CHARS:
-        return refuse(400, f"Please keep it to {MAX_CHARS} characters or fewer.")
+def path_of(url: str) -> str:
+    """The audio's own address on this site, so that the page plays it from wherever it was opened."""
+    return urlparse(url).path
+
+
+async def guarded(request: Request, session, run) -> dict | JSONResponse:
+    """Runs one turn of a conversation, typed or spoken, inside the same limits: a live conversation that has not ended, one turn at a time, a limit on the
+    turns of one conversation and on the turns from one network and from everyone in an hour."""
+    s = request.app.state.svc.settings
     st, t, ip = state(request), now(), client_ip(request)
     purge(st, s.try_session_minutes, t)
-    info = st["sessions"].get(session)
+    info = st["sessions"].get(session) if isinstance(session, str) else None
     if info is None:
         return refuse(404, "This conversation has expired. Please start over.")
     if info["ended"]:
@@ -181,13 +189,57 @@ async def turn(request: Request, _=Depends(enabled)):
     info["turns"] += 1
     info["busy"] = True
     try:
-        result = await voice.run_text_turn(svc, session, text)
+        result = await run()
     except Exception:
-        log.exception("a typed turn failed")
+        log.exception("a turn on the Try it page failed")
         return refuse(502, "Talk could not reply. Please try again.")
     finally:
         info["busy"] = False
     info["ended"] = bool(result.get("ended"))
     trace = ui.scrub_data(result.get("trace") or [])
     return {"reply": ui.scrub(str(result.get("reply") or "")), "ended": info["ended"], "action": ui.scrub(str(result.get("action") or "")), "trace": trace,
-            "steps_html": ui.render_steps(ui.describe_trace(trace)), "turns_left": max(0, s.try_max_turns - info["turns"])}
+            "steps_html": ui.render_steps(ui.describe_trace(trace)), "turns_left": max(0, s.try_max_turns - info["turns"]),
+            **({"heard": ui.scrub(str(result.get("heard") or ""))} if "heard" in result else {}), **({"_audio": result["audio"]} if "audio" in result else {})}
+
+
+@router.post("/turn")
+async def turn(request: Request, _=Depends(enabled)):
+    svc = request.app.state.svc
+    body = await body_of(request)
+    if isinstance(body, JSONResponse):
+        return body
+    session, text = body.get("session"), body.get("text")
+    if not isinstance(session, str) or not isinstance(text, str):
+        return refuse(400, "Send the session and the text.")
+    text = CONTROL.sub("", text).strip()
+    if not text:
+        return refuse(400, "Please type a message.")
+    if len(text) > MAX_CHARS:
+        return refuse(400, f"Please keep it to {MAX_CHARS} characters or fewer.")
+    return await guarded(request, session, lambda: voice.run_text_turn(svc, session, text))
+
+
+@router.post("/speak")
+async def speak(request: Request, _=Depends(enabled)):
+    """One spoken turn of a call made from the browser. The page sends the caller's speech as a WAV file in base64; it is heard, answered and voiced like a
+    phone call, and it is not kept."""
+    svc = request.app.state.svc
+    body = await body_of(request)
+    if isinstance(body, JSONResponse):
+        return body
+    session, data = body.get("session"), body.get("audio")
+    if not isinstance(session, str) or not isinstance(data, str):
+        return refuse(400, "Send the session and the audio.")
+    if len(data) > MAX_AUDIO_BYTES * 4 // 3 + 4:
+        return refuse(413, "That was too long. Please say one sentence at a time.")
+    try:
+        audio = base64.b64decode(data, validate=True)
+    except ValueError:
+        return refuse(400, "The audio could not be read.")
+    if not (audio.startswith(b"RIFF") and audio[8:12] == b"WAVE") and not audio.startswith(b"MOCK["):
+        return refuse(415, "Send the speech as a WAV file.")
+    out = await guarded(request, session, lambda: voice.run_spoken_turn(svc, session, audio))
+    if isinstance(out, JSONResponse):
+        return out
+    result_audio = [path_of(u) for u in (out.pop("_audio", None) or [])]
+    return out | {"audio": result_audio}

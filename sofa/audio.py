@@ -33,7 +33,8 @@ def check_recording_address(url: str, allowed: tuple[str, ...]) -> None:
         raise ValueError(f"a recording is not downloaded from {host or 'that address'}")
 
 
-async def fetch_recording(url: str, attempts: int = 5, wait: float = 0.4, http: httpx.AsyncClient | None = None, allowed: tuple[str, ...] = ()) -> bytes:
+async def fetch_recording(url: str, attempts: int = 5, wait: float = 0.4, http: httpx.AsyncClient | None = None, allowed: tuple[str, ...] = (),
+                          auth: tuple[str, str] | None = None) -> bytes:
     """The telephony provider's recording addresses expire, so the audio is copied to our own storage on each turn.
 
     The address arrives the moment the recording ends, and on a real call the file was not yet on the provider's server ("404 Not Found"). So a missing or
@@ -42,7 +43,7 @@ async def fetch_recording(url: str, attempts: int = 5, wait: float = 0.4, http: 
         return unquote(url[len("mock:"):]).encode("utf-8")
     check_recording_address(url, allowed)
     own = http is None
-    http = http or httpx.AsyncClient(timeout=15, follow_redirects=not allowed)   # with a list of hosts every hop is checked here, so a redirect cannot lead elsewhere
+    http = http or httpx.AsyncClient(timeout=15, follow_redirects=not allowed, auth=auth)   # with a list of hosts every hop is checked here, so a redirect cannot lead elsewhere
     # On the first real call the address the telephony provider sent ended "...T.mp3" and answered 404, while the same file without the stray "T" answered
     # 200. So the address as sent is tried first, then that one.
     plain = re.sub(r"T(\.[A-Za-z0-9]{2,4})$", r"\1", url.split("?")[0])

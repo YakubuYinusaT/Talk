@@ -4,14 +4,29 @@
 {% from "_ui.html" import button, notice %}
 {% from "_trace.html" import trace_panel %}
 
-{% macro chat(scripts, max_chars, test_number="", pick=True, auto=False, heading="Conversation") %}
+{% macro chat(scripts, max_chars, test_number="", pick=True, auto=False, heading="Conversation", modes=False, numbers=[]) %}
 <section class="chat" aria-labelledby="chat-title">
   <div class="card-head">
     <h2 class="card-title" id="chat-title">{{ heading }}</h2>
     <button type="button" class="btn btn-quiet btn-sm needs-js" id="restart">Start over</button>
   </div>
   <noscript>{{ notice("JavaScript is needed to chat." ~ (" You can call " ~ test_number ~ " instead." if test_number else ""), "warning") }}</noscript>
-  <div class="needs-js" id="try-app" data-autoselect="{{ 'true' if auto else 'false' }}">
+  <div class="needs-js" id="try-app" data-autoselect="{{ 'true' if auto else 'false' }}" data-modes="{{ 'true' if modes else 'false' }}">
+    {% if modes %}
+    <div class="mode-tabs" role="tablist" aria-label="How to talk to Sofa">
+      <button type="button" role="tab" id="tab-call" aria-selected="true" aria-controls="call-mode">Call</button>
+      <button type="button" role="tab" id="tab-chat" aria-selected="false" aria-controls="chat-mode" tabindex="-1">Chat</button>
+    </div>
+    <div class="call-panel" id="call-mode" role="tabpanel" aria-labelledby="tab-call">
+      <button type="button" class="call-start" id="call-start">Start call</button>
+      <div class="call-live" id="call-live" hidden>
+        <button type="button" class="mic" id="mic" aria-pressed="false">Speak</button>
+        <button type="button" class="btn btn-quiet btn-sm" id="call-end">End call</button>
+      </div>
+      {% if numbers %}<p class="call-phone">Or call {% for n in numbers %}<a href="tel:{{ n|replace(' ', '') }}">{{ n }}</a>{{ " or " if not loop.last }}{% endfor %}</p>{% endif %}
+    </div>
+    {% endif %}
+    <div id="chat-mode"{% if modes %} role="tabpanel" aria-labelledby="tab-chat" hidden{% endif %}>
     {% if pick %}
     <div class="scripts-block">
       <h3 class="scripts-label" id="scripts-title">Examples</h3>
@@ -30,9 +45,10 @@
       </div>
       <ol class="script-lines" id="script-lines"></ol>
     </section>
+    </div>
     <div class="log" id="log" role="log" aria-live="polite" aria-label="Conversation with Talk"></div>
     <p class="status" id="status" aria-live="polite"></p>
-    <form id="say-form" class="send" autocomplete="off">
+    <form id="say-form" class="send" autocomplete="off"{% if modes %} hidden{% endif %}>
       <div class="field">
         <label for="say">Message</label>
         <input type="text" id="say" name="say" maxlength="{{ max_chars }}" placeholder="Type a message" disabled>
@@ -45,4 +61,4 @@
 {% endmacro %}
 
 {# The panel of steps beside the conversation. The id stays "inside" because try.js writes each reply's steps into it. The wizard passes its own first line. #}
-{% macro inside(intro="Send a message to see the steps.") %}{{ trace_panel("Trace", "inside", intro, sticky=True) }}{% endmacro %}
+{% macro inside(intro="The steps behind each reply appear here.") %}{{ trace_panel("Trace", "inside", intro, sticky=True) }}{% endmacro %}

@@ -170,11 +170,12 @@ def test_the_caller_can_choose_by_position_by_price_by_name_or_by_how_busy(clien
     assert "Which day and time would you like at Surulere Care Clinic" in asked_for("The quicker one, please.", another_caller(4))
 
 
-def test_a_caller_who_names_a_clinic_and_a_time_in_one_sentence_goes_straight_to_the_offer(client, happ, said):
+def test_a_caller_who_names_a_clinic_and_a_time_in_one_sentence_is_only_asked_where_they_will_travel_from(client, happ, said):
     said["Please book me an appointment at Aguda tomorrow morning."] = {"facility": "Aguda", "when": "tomorrow morning"}
-    replies = call(client, ["Please book me an appointment at Aguda tomorrow morning.", "Yes, please."])
-    assert "I can book you at Aguda Community Health Centre tomorrow at 8 in the morning" in replies[1]       # no which-one and no what-time first
-    assert "Your appointment is confirmed at Aguda Community Health Centre" in replies[2] and len(appointments(happ, "state-phc")) == 1
+    replies = call(client, ["Please book me an appointment at Aguda tomorrow morning.", "Yes, I will come from Surulere.", "Yes, please."])
+    assert "Will you be travelling to Aguda Community Health Centre from Surulere" in replies[1]       # no which-one and no what-time: only where from
+    assert "I can book you at Aguda Community Health Centre tomorrow at 8 in the morning" in replies[2] and "please plan to leave by" in replies[2]
+    assert "Your appointment is confirmed at Aguda Community Health Centre" in replies[3] and len(appointments(happ, "state-phc")) == 1
 
 
 def test_a_vague_request_is_asked_about_one_thing_at_a_time(client):
@@ -389,23 +390,28 @@ def test_each_provider_sees_a_different_reference_and_never_the_phone_number(cli
 # ---- an emergency is never answered with a menu ----------------------------------------------------------------------------------------------------
 
 
+def gives_112_first(reply: str) -> bool:
+    """The first sentence the caller hears asks them to call 112."""
+    return "call 112 now" in reply.split(". ")[0]
+
+
 def test_an_emergency_gets_the_emergency_number_first_and_no_queue(client):
     replies = call(client, ["Please, my brother is not breathing, we are in Ikeja."])
-    assert replies[1].startswith("If this is an emergency, please call 112 now.") and "Ikeja Heights General Hospital" in replies[1]
+    assert gives_112_first(replies[1]) and "Ikeja Heights General Hospital" in replies[1]
     assert "people are waiting" not in replies[1] and "book an appointment" not in replies[1]
-    assert "I have also informed Ikeja Heights General Hospital" in replies[1]
+    assert "I have told their team about you" in replies[1] and "Were you able to reach 112?" in replies[1]
 
 
 def test_an_emergency_with_no_area_gets_the_emergency_number_at_once_and_then_the_nearest_care(client):
     replies = call(client, ["Please, my brother is not breathing.", "We are in Ikeja."])
-    assert replies[1].startswith("If this is an emergency, please call 112 now.") and "Which area of Lagos are you in" in replies[1]
-    assert replies[2].startswith("If this is an emergency, please call 112 now.") and "Ikeja Heights General Hospital" in replies[2]
+    assert gives_112_first(replies[1]) and "Where are you, please" in replies[1]
+    assert gives_112_first(replies[2]) and "Ikeja Heights General Hospital" in replies[2]
     assert "book an appointment" not in replies[2] and "people are waiting" not in replies[2]
 
 
 def test_an_emergency_in_the_middle_of_something_else_takes_over(client):
     replies = call(client, [WANT_TO_BOOK, IN_SURULERE, "Please, my father has collapsed and he is unconscious, we are in Ikeja."])
-    assert replies[3].startswith("If this is an emergency, please call 112 now.") and "Ikeja Heights General Hospital" in replies[3]
+    assert gives_112_first(replies[3]) and "Ikeja Heights General Hospital" in replies[3]
 
 
 ALL_PROVIDERS = {"state-phc", "eko-care", "everwell", "onc-centre"}
@@ -415,7 +421,7 @@ EMERGENCY_FIRST = "If this is an emergency, please call 112 now."
 def test_an_emergency_gets_the_emergency_number_first_even_when_every_clinic_system_is_down(client, happ):
     happ.state.net.down = set(ALL_PROVIDERS)
     replies = call(client, ["Please, my brother is not breathing, we are in Ikeja."])
-    assert replies[1].startswith(EMERGENCY_FIRST)
+    assert gives_112_first(replies[1])
     assert "could not reach the clinics" in replies[1] and "Is there anything else I can help with?" in replies[1]
     assert "not available right now" not in replies[1]      # the ordinary apology for a service that is down says nothing about the emergency number
 
@@ -423,29 +429,29 @@ def test_an_emergency_gets_the_emergency_number_first_even_when_every_clinic_sys
 def test_an_emergency_with_no_area_still_hears_the_emergency_number_when_every_clinic_system_is_down(client, happ):
     happ.state.net.down = set(ALL_PROVIDERS)
     replies = call(client, ["Please, my brother is not breathing.", "We are in Ikeja."])
-    assert replies[1].startswith(EMERGENCY_FIRST) and "Which area of Lagos are you in" in replies[1]
-    assert replies[2].startswith(EMERGENCY_FIRST) and "could not reach the clinics" in replies[2]
+    assert gives_112_first(replies[1]) and "Where are you, please" in replies[1]
+    assert gives_112_first(replies[2]) and "could not reach the clinics" in replies[2]
 
 
 def test_an_emergency_when_no_provider_is_set_up_at_all_still_hears_the_emergency_number(client, happ):
     happ.state.svc.orchestrator.adapter("health").providers = []
     replies = call(client, ["Please, my brother is not breathing, we are in Ikeja."])
-    assert replies[1].startswith(EMERGENCY_FIRST) and "could not reach the clinics" in replies[1]
+    assert gives_112_first(replies[1]) and "could not reach the clinics" in replies[1]
 
 
 def test_an_emergency_caller_whose_area_is_not_understood_hears_the_emergency_number_every_time(client):
     replies = call(client, ["Please, my brother is not breathing.", "Somewhere near the big tree.", "It is beside the old well."])
-    assert all(reply.startswith(EMERGENCY_FIRST) for reply in replies[1:4])
-    assert "I did not recognise that area" in replies[2] and "I could not find the nearest emergency care" in replies[3]
+    assert all(gives_112_first(reply) for reply in replies[1:4])
+    assert "I did not recognise that place" in replies[2] and "I could not find the nearest emergency care" in replies[3]
 
 
 def test_an_emergency_that_finds_no_emergency_care_near_the_caller_still_hears_the_emergency_number(client, monkeypatch):
-    async def none_found(self, gw, req, **kwargs):
-        return [], True      # the providers answered, and none of them has a place to offer
+    async def none_found(self, gw, op, args, kind=None):
+        return [(spec, {"facilities": []}) for spec in self.specs(kind)]      # the providers answered, and none of them takes emergencies
 
-    monkeypatch.setattr(HealthAdapter, "places", none_found)
+    monkeypatch.setattr(HealthAdapter, "ask_all", none_found)
     replies = call(client, ["Please, my brother is not breathing, we are in Ikeja."])
-    assert replies[1].startswith(EMERGENCY_FIRST) and "could not find emergency care near you" in replies[1]
+    assert gives_112_first(replies[1]) and "could not find emergency care near you" in replies[1]
 
 
 # ---- the simulated cancer centre ------------------------------------------------------------------------------------------------------------------------

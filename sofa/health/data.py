@@ -53,6 +53,7 @@ class Facility:
     services: tuple[str, ...]
     hours: dict          # weekday (0 is Monday) -> (opens, closes) as whole hours; a missing day is closed
     emergency: bool = False       # open at all hours for emergencies
+    emergency_places: int = 0     # places the hospital keeps for emergency patients that Talk may hold for a caller who could not reach 112
     booking: bool = True
     base_queue: int = 10          # people waiting at the busiest quiet hour
     minutes: int = 8              # minutes the clinic takes per patient
@@ -108,7 +109,7 @@ STATE = Network("state-phc", "Lagos State Primary Health Network", "state", (
     Facility("hc-yaba-mainland", "Yaba Mainland Health Centre", "primary health centre", "Yaba", "Murtala Muhammed Way", (0.003, 0.001),
              (GENERAL, ANTENATAL, IMMUNISATION, MALARIA), PHC_HOURS, base_queue=13, minutes=7, fee=500),
     Facility("gh-ikeja-heights", "Ikeja Heights General Hospital", "general hospital", "Ikeja", "Obafemi Awolowo Way", (0.003, 0.002),
-             (GENERAL, ANTENATAL, IMMUNISATION, MALARIA, LAB, FAMILY, EMERGENCY), HOSPITAL_HOURS, emergency=True, base_queue=30, minutes=6, fee=1000),
+             (GENERAL, ANTENATAL, IMMUNISATION, MALARIA, LAB, FAMILY, EMERGENCY), HOSPITAL_HOURS, emergency=True, emergency_places=3, base_queue=30, minutes=6, fee=1000),
     Facility("hc-mushin-unity", "Mushin Unity Health Centre", "primary health centre", "Mushin", "Ladipo Road", (0.002, 0.003),
              (GENERAL, ANTENATAL, IMMUNISATION, MALARIA), PHC_HOURS, base_queue=16, minutes=7, fee=500),
     Facility("hc-oshodi-crossroads", "Oshodi Crossroads Health Centre", "primary health centre", "Oshodi", "Agege Motor Road", (-0.003, 0.002),
@@ -120,11 +121,11 @@ STATE = Network("state-phc", "Lagos State Primary Health Network", "state", (
     Facility("hc-agege", "Agege Pen Cinema Health Centre", "primary health centre", "Agege", "Old Abeokuta Road", (0.001, 0.002),
              (GENERAL, ANTENATAL, IMMUNISATION, MALARIA), PHC_HOURS, base_queue=15, minutes=7, fee=500),
     Facility("gh-ikorodu-greenfield", "Ikorodu Greenfield General Hospital", "general hospital", "Ikorodu", "Lagos Road", (0.002, 0.001),
-             (GENERAL, ANTENATAL, IMMUNISATION, MALARIA, LAB, EMERGENCY), HOSPITAL_HOURS, emergency=True, base_queue=26, minutes=6, fee=1000),
+             (GENERAL, ANTENATAL, IMMUNISATION, MALARIA, LAB, EMERGENCY), HOSPITAL_HOURS, emergency=True, emergency_places=2, base_queue=26, minutes=6, fee=1000),
     Facility("hc-festac-town", "Festac Town Health Centre", "primary health centre", "Festac", "Second Avenue", (0.002, 0.002),
              (GENERAL, ANTENATAL, IMMUNISATION, MALARIA), PHC_HOURS, base_queue=15, minutes=7, fee=500),
     Facility("gh-island-central", "Lagos Island Central Hospital", "general hospital", "Lagos Island", "Broad Street", (0.001, -0.001),
-             (GENERAL, ANTENATAL, MALARIA, LAB, EMERGENCY), HOSPITAL_HOURS, emergency=True, base_queue=32, minutes=6, fee=1000),
+             (GENERAL, ANTENATAL, MALARIA, LAB, EMERGENCY), HOSPITAL_HOURS, emergency=True, emergency_places=0, base_queue=32, minutes=6, fee=1000),   # full today
     Facility("hc-ajah", "Ajah Community Health Centre", "primary health centre", "Ajah", "Sangotedo Road", (0.003, 0.001),
              (GENERAL, ANTENATAL, IMMUNISATION, MALARIA), PHC_HOURS, base_queue=14, minutes=7, fee=500),
     Facility("hc-apapa-marine", "Apapa Marine Health Centre", "primary health centre", "Apapa", "Creek Road", (0.002, -0.001),
@@ -145,7 +146,7 @@ PRIVATE = Network("eko-care", "Eko Care Private Clinics", "private", (
     Facility("cl-lekki-family", "Lekki Family Clinic", "clinic", "Lekki", "Admiralty Way", (0.001, 0.002),
              (GENERAL, ANTENATAL, IMMUNISATION, LAB, FAMILY), CLINIC_HOURS, base_queue=5, minutes=12, fee=15000),
     Facility("cl-ajah-seaside", "Ajah Seaside Medical Centre", "clinic", "Ajah", "Lekki-Epe Expressway", (0.002, -0.002),
-             (GENERAL, MALARIA, LAB, EMERGENCY), CLINIC_HOURS, emergency=True, base_queue=8, minutes=10, fee=12000),
+             (GENERAL, MALARIA, LAB, EMERGENCY), CLINIC_HOURS, emergency=True, emergency_places=1, base_queue=8, minutes=10, fee=12000),
     Facility("cl-vi-wellness", "Victoria Island Wellness Clinic", "clinic", "Victoria Island", "Adeola Odeku Street", (0.001, 0.001),
              (GENERAL, ANTENATAL, LAB, FAMILY), CLINIC_HOURS, base_queue=4, minutes=12, fee=20000),
     Facility("cl-apapa-harbour", "Apapa Harbour Clinic", "clinic", "Apapa", "Warehouse Road", (0.001, 0.001),

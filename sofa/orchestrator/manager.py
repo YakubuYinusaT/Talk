@@ -17,6 +17,7 @@ from ..dialogue import templates
 from ..dialogue.outcome import Outcome
 from ..dialogue.validator import fill
 from ..services.handoff import open_handoff
+from ..health import floor
 from . import registry, understanding, wording
 from .answers import closing, quick_answer
 
@@ -66,6 +67,13 @@ class CallManager:
         return self.reply("repeat_prompt", action="asr_low_confidence")
 
     # ---- understanding: one model call per turn --------------------------------------------------
+
+    async def emergency(self, health, transcript: str, signal) -> Outcome:
+        """Someone may be in danger: the health desk answers at once, whatever else the caller was doing."""
+        self.st["pending"], self.st["domain"] = None, "health"
+        self.call.service_domain = "health"
+        self.note("urgency", level=signal.level, source=signal.source, hits=list(signal.hits))
+        return await health.emergency(self, transcript)
 
     async def understand(self, transcript: str) -> understanding.Understanding:
         """Service, tool, details and yes/no, all in one call. Cached for the turn. The model may only name a registered tool; anything else is dropped here,
@@ -144,14 +152,23 @@ class CallManager:
             return self.reply("call_goodbye", end=True, action="goodbye")
         st["said"] = (st.get("said", []) + [transcript.strip()[:200]])[-3:]  # what the provider is told if this goes unresolved
         health = self.svc.orchestrator.adapter("health")
-        if health and health.is_emergency(transcript):  # someone may be in danger: the health desk answers at once, whatever else the caller was doing
-            st["pending"], st["domain"] = None, "health"
-            self.call.service_domain = "health"
-            return await health.turn(self, transcript, confidence)
+        in_emergency = str((st.get("pending") or {}).get("step", "")).startswith("emergency")   # the emergency help is already going: its questions are answered below
+        signal = floor.read(transcript)
+        if health and not in_emergency and "ambulance" in transcript.lower():   # Talk cannot send one, and says so plainly, with what it can do
+            return health.ambulance(self, transcript)
+        if health and not in_emergency and signal.level == floor.EMERGENCY:  # the words alone say someone may be in danger: no model is waited for
+            return await self.emergency(health, transcript, signal)
         if health and not st.get("pending"):  # a fresh request, not an answer to a question: read it now, alongside the understanding call below
             self._health_read = asyncio.ensure_future(health.read(self, transcript))
         u = await self.understand(transcript)
         self.raw_json = {"domain": u.domain, "tool": u.tool}
+        heard = floor.combine(signal, u.urgency)    # the model read urgency by meaning: it can raise what the words alone gave, never lower it
+        if health and not in_emergency and heard.level == floor.EMERGENCY:
+            return await self.emergency(health, transcript, heard)
+        if health and not in_emergency and heard.level == floor.POSSIBLE and not st.get("danger_asked"):
+            st["danger_asked"] = True    # asked once in a call: a caller who said no is not asked again for the same worry
+            self.note("urgency", level=heard.level, source=heard.source, hits=list(heard.hits))
+            return health.danger_check(self, transcript)
         if st.get("pending"):  # Talk asked something: this turn is probably the answer
             out = await self.resolve_pending(st["pending"], transcript)
             if out:

@@ -106,6 +106,18 @@ def requests_of(store: HospitalStore, now: datetime) -> tuple[list[dict], list[d
     return waiting, answered
 
 
+def holds_of(store: HospitalStore, now: datetime) -> tuple[list[dict], list[dict]]:
+    """The emergency places held for callers now, newest first, and how many places each emergency department has free."""
+    held = []
+    for h in store.holds():
+        f = store.by_id.get(h["facility_id"])
+        until = datetime.fromisoformat(h["expires"])
+        held.append({"code": h["code"], "place": f.name if f else h["facility_id"], "age": age_words(datetime.fromisoformat(h["created"]), now),
+                     "until": f"{until:%H:%M}"})
+    rooms = [{"place": f.name, "free": store.places_free(f), "places": f.emergency_places} for f in store.facilities if f.emergency]
+    return held, rooms
+
+
 def stock_of(store: HospitalStore) -> dict | None:
     """What each pharmacy holds of each medicine, for a provider that has pharmacies. The numbers are made up but steady (data.stock_level)."""
     pharmacies = [f for f in store.facilities if f.kind == "pharmacy"]
@@ -130,6 +142,7 @@ def build(network: data.Network, store: HospitalStore, desk_key: str, key: str, 
     groups, today_total, today_unmarked = visits_of(store, now)
     waiting, answered = requests_of(store, now)
     stock = stock_of(store)
+    holds, rooms = holds_of(store, now)
     urgent = sum(1 for r in waiting if r["urgent"])
     people = sum(p["people"] for p in places if p["open"])
     if stock:
@@ -151,7 +164,7 @@ def build(network: data.Network, store: HospitalStore, desk_key: str, key: str, 
             "access": access, "marking": marking, "key": key if marking else "", "tiles": tiles, "places": places,
             "groups": groups, "bookable": any(p["bookable"] for p in places), "waiting": waiting, "answered": answered, "urgent": urgent, "stock": stock, "guide": guide,
             "book_places": sorted({(v["place_id"], v["place"]) for g in groups for v in g["visits"]}, key=lambda pair: pair[1]),
-            "demo": network.demo, "assistant": None, "embedded": False, **(extras or {})}
+            "demo": network.demo, "assistant": None, "embedded": False, "holds": holds, "rooms": rooms, **(extras or {})}
 
 
 def render(network: data.Network, store: HospitalStore, desk_key: str, key: str, staff: bool = False, extras: dict | None = None) -> str:

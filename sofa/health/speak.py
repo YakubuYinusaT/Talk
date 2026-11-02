@@ -25,6 +25,12 @@ def km_phrase(km: float | None) -> str:
     return f"about {n} kilometre{'s' if n != 1 else ''} away"
 
 
+def distance_phrase(f: dict) -> str:
+    """How far a place is from the caller: the trip with the usual traffic. Nothing is said until the caller has told Talk where they are, because a distance
+    from the middle of an area the caller only named would sound like a distance from the caller."""
+    return f.get("travel") or f.get("tv") or ""
+
+
 def hours_phrase(f: dict, now: datetime) -> str:
     if f.get("all_day"):
         return "It is open day and night."
@@ -54,7 +60,7 @@ def fee_phrase(f: dict) -> str:
 
 def place_line(f: dict, now: datetime, queue: bool = True, fee: bool = True) -> str:
     """One place, in full: what it is, where, how far, whether it is open, the queue and the fee."""
-    parts = [f"{f['name']}, {article(kind_phrase(f))} on {f['address']}" + (f", {km_phrase(f['km'])}" if f.get("km") is not None else "") + ".",
+    parts = [f"{f['name']}, {article(kind_phrase(f))} on {f['address']}" + (f", {distance_phrase(f)}" if distance_phrase(f) else "") + ".",
              hours_phrase(f, now), queue_phrase(f) if queue else "", fee_phrase(f) if fee else ""]
     return " ".join(p for p in parts if p)
 
@@ -62,8 +68,8 @@ def place_line(f: dict, now: datetime, queue: bool = True, fee: bool = True) -> 
 def option_line(f: dict, brief: bool = False) -> str:
     """One place in a list the caller chooses from: short, with the things that decide between them. An emergency list has only the kind and the distance."""
     line = f"{f['name']}, {article(kind_phrase(f))}"
-    if f.get("km") is not None:
-        line += f", {km_phrase(f['km'])}"
+    if distance_phrase(f):
+        line += f", {distance_phrase(f)}"
     if brief:
         return line
     extras, closed = [], not f.get("open_now") and not f.get("all_day")

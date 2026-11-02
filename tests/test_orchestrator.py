@@ -123,7 +123,7 @@ def test_a_model_that_names_an_operation_that_does_not_exist_is_treated_as_not_u
         return await real(model, system, transcript, alternatives, json_schema)
 
     llm.extract = inventive
-    replies = call(client, ["Please send an ambulance to my house."])
+    replies = call(client, ["Please arrange a helicopter to my house."])
     assert replies[1] in phrases("call_ask_again")
     [step] = understood(hdb)
     assert step["tool"] is None and step["domain"] == "unclear"

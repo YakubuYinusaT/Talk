@@ -74,7 +74,7 @@ def hdb(happ):
 
 @pytest.fixture
 def said(happ):
-    """The model's reading of the caller's words, set per test: {sentence: the fields it filled in}. 'choice:<sentence>' sets which option it picks. The rest is the stand-in model."""
+    """The model's reading of the caller's words, set per test: {sentence: the fields it filled in}. 'choice:<sentence>' sets which option it picks, 'meaning:<sentence>' what it made of an answer, and 'urgency:<sentence>' the urgency it read. The rest is the stand-in model."""
     readings: dict = {}
     llm = happ.state.svc.llm
     real = llm.extract
@@ -84,6 +84,12 @@ def said(happ):
             return model(**readings.get(transcript, {})), {}
         if system.startswith("CHOICE"):
             return model(choice=readings.get("choice:" + transcript)), {}
+        if system.startswith("UNDERSTAND") and "urgency:" + transcript in readings:
+            got, raw = await real(model, system, transcript, alternatives, json_schema)
+            got.urgency = readings["urgency:" + transcript]
+            return got, raw
+        if system.startswith("REPLY") and "meaning:" + transcript in readings:
+            return model(**readings["meaning:" + transcript]), {}
         return await real(model, system, transcript, alternatives, json_schema)
 
     llm.extract = extract

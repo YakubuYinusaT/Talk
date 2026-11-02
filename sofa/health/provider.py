@@ -44,6 +44,9 @@ TOOLS = [
     {"name": "request", "description": "Pass something to this provider's staff: a question its guide does not cover, a wish to speak to a person, or an emergency", "risk": "service",
      "params": [{"name": "kind", "prompt": "question, person or emergency", "required": True}, {"name": "summary", "prompt": "What the caller said", "required": True},
                 {"name": "urgent", "prompt": "Is it urgent?", "required": False}]},
+    {"name": "emergency", "description": "This provider's hospitals that take emergencies, with how many emergency places are free now", "params": []},
+    {"name": "emergency_hold", "description": "Keep one emergency place for a caller who could not reach the emergency number", "risk": "service",
+     "params": [{"name": "facility_id", "prompt": "Which hospital?", "required": True}]},
     {"name": "request_status", "description": "Whether the staff have answered one of the caller's own requests, and what they said",
      "params": [{"name": "code", "prompt": "The request code", "required": True}]},
 ]
@@ -107,14 +110,14 @@ class Provider:
         return {"id": f.id, "name": f.name, "kind": f.kind, "area": f.area, "address": f.address, "km": None if km is None else round(km, 1), "services": list(f.services),
                 "open_now": self.store.is_open(f, now), "all_day": f.hours.get(0) == (0, 24), "closes": span[1] if span and span[0] <= now.hour < span[1] else None,
                 "opens_next": opens_next, "emergency": f.emergency, "bookable": f.booking, "fee": f.fee, "waiting": people, "wait_minutes": wait,
-                "owner": self.network.owner, "provider": self.network.name, "sms_name": f.sms_name or f.name}
+                "owner": self.network.owner, "provider": self.network.name, "sms_name": f.sms_name or f.name, "lat": f.lat, "lon": f.lon}
 
     # ---- the operations ----------------------------------------------------------------------------
 
     def call(self, tool: str, args: dict, ctx: dict) -> dict:
         handler = {"search": self.search, "slots": self.slots, "book": self.book, "cancel": self.cancel, "upcoming": self.upcoming, "stock": self.stock,
                    "knowledge": self.knowledge, "visit_status": self.visit_status, "request": self.request, "request_status": self.request_status,
-                   "confirm": self.confirm}.get(tool)
+                   "confirm": self.confirm, "emergency": self.emergency, "emergency_hold": self.emergency_hold}.get(tool)
         if not handler:
             return refuse("unknown_tool")
         try:
@@ -223,6 +226,25 @@ class Provider:
         if not caller or not summary or kind not in self.store.REQUEST_KINDS:
             return refuse("bad_request")
         return ok(request=self.store.add_request(kind, bool(args.get("urgent")), summary, caller))
+
+    def emergency(self, args: dict, ctx: dict) -> dict:
+        """The hospitals that take emergencies, each with the places it keeps for them and how many are free now. Nearest first when Talk says where from."""
+        now = self.store.clock()
+        pool = [f for f in self.store.facilities if f.emergency]
+        lat, lon = args.get("lat"), args.get("lon")
+        ranked = self.store.nearest(float(lat), float(lon), pool) if lat is not None and lon is not None else [(f, None) for f in pool]
+        return ok(facilities=[{**self.describe(f, now, km), "places": f.emergency_places, "places_free": self.store.places_free(f)} for f, km in ranked])
+
+    def emergency_hold(self, args: dict, ctx: dict) -> dict:
+        """Keeps an emergency place for the caller (known here only by a reference, never a phone number) and puts it at the top of the front desk."""
+        caller = str(ctx.get("caller_id") or "")
+        f = self.store.by_id.get(str(args.get("facility_id") or ""))
+        if not caller or f is None or not f.emergency:
+            return refuse("bad_request")
+        held = self.store.hold(f, caller)
+        if held is None:
+            return refuse("full")
+        return ok(hold={**held, "facility_id": f.id, "name": f.name, "address": f.address})
 
     def request_status(self, args: dict, ctx: dict) -> dict:
         caller = str(ctx.get("caller_id") or "")

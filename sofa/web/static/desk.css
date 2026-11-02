@@ -41,6 +41,10 @@ h3 .count { margin-left: var(--space-2); font-weight: 400; }
 .desk .card > .empty { margin: 0; }
 
 /* ---- the request inbox: an urgent request cannot be missed ---- */
+.emergency-card.has-holds { border-color: var(--danger); border-left: 8px solid var(--danger); }
+ol.holds { list-style: none; margin: 0; padding: 0; max-width: none; display: grid; gap: var(--space-2); }
+.hold { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); align-items: center; margin: 0; padding: var(--space-3) var(--space-4); border-radius: var(--radius); background: color-mix(in srgb, var(--danger) 8%, var(--surface)); }
+.hold .age { margin-left: auto; font-size: var(--fs-sm); color: var(--text-3); }
 ol.requests { list-style: none; margin: 0; padding: 0; max-width: none; display: grid; gap: var(--space-3); }
 .request { margin: 0; padding: var(--space-4); background: var(--surface-2); border: 1px solid var(--border); border-left: 4px solid var(--border-strong); border-radius: var(--radius); }
 .request.urgent { border-color: var(--danger); border-left-width: 8px; background: color-mix(in srgb, var(--danger) 8%, var(--surface)); }

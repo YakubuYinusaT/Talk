@@ -11,16 +11,16 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from pydantic import BaseModel
 from sqlalchemy import select
 
 from ...dialogue import templates
 from ...dialogue.outcome import Outcome
-from ...health import gazetteer, scope, speak
+from ...health import floor, gazetteer, scope, speak, travel
 from ...health.data import AREAS
-from ...health.when import answer_of, hesitates, join_names, lagos_now, parse_when, said_nothing_about_time, say_day, say_on_day, say_time, when_in_words
+from ...health.when import answer_of, hesitates, join_names, wants_earliest, lagos_now, parse_when, said_nothing_about_time, say_day, say_on_day, say_time, when_in_words
 from ...health.links import ProviderError, Unavailable
 from ..tools import Tool
 from . import ServiceAdapter
@@ -68,6 +68,8 @@ class Request:
     when: str | None = None       # a day and time, as said
     drug: str | None = None
     red_flag: bool = False
+    origin: str | None = None  # the area the caller is in or will travel from, only when they said so: every travel time starts here
+    from_asked: bool = False   # Talk has asked where the caller will travel from, once
     tries: int = 0                # how many times the same question has been asked
     utterance: str = ""
 
@@ -89,6 +91,16 @@ class Reading(BaseModel):
 
 class PickedOption(BaseModel):
     choice: str | None = None
+
+
+class Meaning(BaseModel):
+    """What the caller meant by an answer to the question Talk had just asked."""
+    meaning: str = "unclear"
+    when: str | None = None
+    area: str | None = None
+
+
+MEANINGS = ["gave_it", "earliest", "yes", "no", "something_else", "unclear"]
 
 
 def tokens(text: str) -> list[str]:
@@ -235,7 +247,8 @@ class HealthAdapter(ServiceAdapter):
         answers = await asyncio.gather(*(self.provider_call(gw, s, op, args) for s in specs))
         return [(s, a) for s, a in zip(specs, answers) if a is not None]
 
-    async def places(self, gw, req: Request, *, kind: str | None, bookable: bool = False, query: str | None = None, limit: int = 4) -> tuple[list[dict], bool]:
+    async def places(self, gw, req: Request, *, kind: str | None, bookable: bool = False, query: str | None = None, limit: int = 4,
+                     origin: str | None = None) -> tuple[list[dict], bool]:
         """Places from every provider that fits, open and nearest first. The flag is False when no provider could be reached at all."""
         args = {"limit": limit, **({"need": req.need} if req.need else {}), **({"query": query} if query else {}), **({"bookable": True} if bookable else {})}
         if req.area:
@@ -245,14 +258,36 @@ class HealthAdapter(ServiceAdapter):
         if query and found:     # each provider names its own best match: only the best across all of them is what the caller meant
             best = max(f.get("match", 0) for f in found)
             found = [f for f in found if f.get("match", 0) >= best - 0.01]
-        found.sort(key=lambda f: (not (f["open_now"] or f["all_day"] or (req.need == "emergency care" and f["emergency"])), f["km"] if f["km"] is not None else 99, f["wait_minutes"]))
+        self.with_travel(gw, found, origin or req.origin)
+        found.sort(key=lambda f: (not (f["open_now"] or f["all_day"] or (req.need == "emergency care" and f["emergency"])), self.how_far(f), f["wait_minutes"]))
         return found[:limit], bool(answered)    # every provider answers with up to `limit` places, so the best few across all of them are kept
+
+    def with_travel(self, gw, found: list[dict], area: str | None) -> None:
+        """Adds the trip from where the caller is to every place, with the usual traffic at this hour. Nothing is added until the caller has said where they are."""
+        if not area:
+            return
+        now, spans = self.now(), []
+        for f in found:
+            t = travel.trip(area, f.get("lat"), f.get("lon"), f.get("area"), now)
+            if t is not None:
+                f["eta"], f["travel"] = round(t.middle), travel.away_phrase(t)
+                spans.append(f"{f['name']}: {travel.say_span(t)}")
+        if spans:
+            self.note(gw, "travel", origin=area, hour=now.strftime("%H:%M"), trips="; ".join(spans[:4]))
+
+    @staticmethod
+    def how_far(f: dict) -> float:
+        """What orders places for a caller: minutes on the road when they are known, otherwise kilometres counted as three minutes each."""
+        if f.get("eta") is not None:
+            return f["eta"]
+        return f["km"] * 3 if f.get("km") is not None else 999
 
     async def fetch_place(self, gw, req: Request, place: dict) -> dict | None:
         """The full, current facts about one place a caller chose, from the provider that runs it."""
         args = {"ids": [place["id"]], "limit": 1, **({"lat": AREAS[req.area].lat, "lon": AREAS[req.area].lon} if req.area else {})}
         answer = await self.provider_call(gw, self.spec_of(place), "search", args)
         found = (answer or {}).get("facilities", [])
+        self.with_travel(gw, found, req.origin)
         return found[0] if found else None
 
     # ---- reading the caller's words ------------------------------------------------------------------
@@ -270,7 +305,7 @@ class HealthAdapter(ServiceAdapter):
         found = parse_when(text, self.now())
         area = gazetteer.match_area(text)
         req = Request(need=gazetteer.detect_need(text), area=area.name if area else None, when=text if not said_nothing_about_time(found) else None,
-                      drug=gazetteer.match_drug(text), red_flag=gazetteer.has_red_flag(text), utterance=text[:300])
+                      drug=gazetteer.match_drug(text), red_flag=floor.read(text).level == floor.EMERGENCY, utterance=text[:300])
         schema = {"type": "object", "additionalProperties": False, "required": list(Reading.model_fields),
                   "properties": {"need": {"anyOf": [{"type": "string", "enum": gazetteer.NEED_CHOICES}, {"type": "null"}], "description": "what the caller needs care for"},
                                  **{n: {"anyOf": [{"type": "string"}, {"type": "null"}], "description": d} for n, d in (
@@ -292,6 +327,8 @@ class HealthAdapter(ServiceAdapter):
             req.need = got.need
         named = gazetteer.match_area(grounded(got.area) or "")
         req.area = named.name if named else req.area
+        here = gazetteer.caller_location(text)
+        req.origin = here.name if here else req.origin
         req.facility = grounded(got.facility) or req.facility
         req.when = grounded(got.when) or req.when
         req.drug = grounded(got.drug) or req.drug
@@ -299,19 +336,12 @@ class HealthAdapter(ServiceAdapter):
 
     # ---- entry ----------------------------------------------------------------------------------------
 
-    @staticmethod
-    def is_emergency(text: str) -> bool:
-        return gazetteer.has_red_flag(text)
-
     async def turn(self, gw, transcript: str, confidence: float) -> Outcome:
-        if self.is_emergency(transcript):   # no model call and no menu: an emergency is answered at once
-            area = gazetteer.match_area(transcript)
-            return await self.start(gw, "health.find_facility", Request(need="emergency care", area=area.name if area else None, red_flag=True, utterance=transcript[:300]))
         u = await gw.understand(transcript)
         started, gw._health_read = getattr(gw, "_health_read", None), None
         req = await started if started is not None else await self.read(gw, transcript)    # already running since the turn began, when the orchestrator could start it
         if req.need == "emergency care":    # the model read an emergency by meaning
-            return await self.start(gw, "health.find_facility", req)
+            return await self.emergency(gw, transcript)
         tool_id = self.tool_of(u, req)
         if not tool_id:
             out = gw.ask("health_ask_what", {"kind": PENDING, "step": "what", "req": req.pack()}, action="health_ask_what", service="health services")
@@ -338,7 +368,7 @@ class HealthAdapter(ServiceAdapter):
         return await handlers[tool_id](gw, req)
 
     def ask(self, gw, step: str, tool_id: str, req: Request, question: str, **state) -> Outcome:
-        return gw.ask("health_say", {"kind": PENDING, "step": step, "tool": tool_id, "req": req.pack(), "tries": req.tries, **state},
+        return gw.ask("health_say", {"kind": PENDING, "step": step, "tool": tool_id, "req": req.pack(), "tries": req.tries, "question": question[-300:], **state},
                       action=f"health_ask_{step}", answer=question)
 
     @staticmethod
@@ -364,50 +394,120 @@ class HealthAdapter(ServiceAdapter):
             return self.say(gw, self.words(gw, "health_emergency_unreachable"), "health_emergency_unreachable")
         return gw.reply("health_unavailable", action="health_unreachable", service="the clinics' systems")
 
+    # ---- emergencies ---------------------------------------------------------------------------------------
+
+    def ambulance(self, gw, transcript: str) -> Outcome:
+        """Talk cannot send an ambulance. It says so, gives the emergency number, which can, and repeats a place already held for the caller."""
+        held = gw.st.get("emergency_hold")
+        if held:
+            return self.say(gw, self.words(gw, "health_ambulance_held", name=held["n"], address=held["a"]), "health_ambulance")
+        return self.ask(gw, "emergency_check", "health.emergency", Request(utterance=transcript[:300]), self.words(gw, "health_ambulance"), said=transcript[:300])
+
+    def danger_check(self, gw, transcript: str) -> Outcome:
+        """It might be an emergency. The emergency number comes first, then one question, and nothing is asked of any hospital yet."""
+        return self.ask(gw, "emergency_check", "health.emergency", Request(utterance=transcript[:300]), self.words(gw, "health_emergency_possible"), said=transcript[:300])
+
+    async def emergency(self, gw, transcript: str, area: str | None = None) -> Outcome:
+        """Someone may be in danger now. The emergency number first, at once and by text as well, then where the caller is, then the nearest hospital that has
+        an emergency place free. In an emergency any place the caller names is taken as where they are."""
+        gw.st["domain"] = gw.call.service_domain = DOMAIN
+        req = Request(need="emergency care", red_flag=True, utterance=transcript[:300])
+        if not gw.st.get("emergency_texted"):
+            gw.st["emergency_texted"] = await self.text_caller(gw, self.words(gw, "health_sms_emergency_number"))
+        if not self.specs("clinics"):
+            return self.say(gw, self.words(gw, "health_emergency_unreachable"), "health_emergency_unreachable")
+        here = gazetteer.match_area(area or "") or gazetteer.match_area(transcript)
+        if not here:
+            return self.ask(gw, "emergency_where", "health.emergency", req, self.words(gw, "health_emergency_ask_where"), said=transcript[:300])
+        return await self.emergency_route(gw, req, here.name, transcript)
+
+    async def emergency_route(self, gw, req: Request, area: str, said: str) -> Outcome:
+        """Asks every hospital how many emergency places are free, orders those that have one by the trip from the caller, tells the nearest one about the
+        caller on its front desk, and asks whether the caller reached the emergency number."""
+        req.origin = req.area = area
+        answered = await self.ask_all(gw, "emergency", {"lat": AREAS[area].lat, "lon": AREAS[area].lon}, "clinics")
+        if not answered:
+            return self.say(gw, self.words(gw, "health_emergency_unreachable"), "health_emergency_unreachable")
+        found = [{**f, "d": spec.domain} for spec, a in answered for f in a.get("facilities", [])]
+        self.with_travel(gw, found, area)
+        found.sort(key=self.how_far)
+        free = [f for f in found if f.get("places_free", 0) > 0]
+        if not free:
+            if not found:
+                return self.say(gw, self.words(gw, "health_emergency_none"), "health_emergency_none")
+            near = found[0]
+            return self.say(gw, self.words(gw, "health_emergency_all_full", name=near["name"], address=near["address"], travel=near.get("travel") or ""),
+                            "health_emergency_all_full")
+        best = free[0]
+        await self.file_request(gw, self.spec_of(best), "emergency", self.words(gw, "health_staff_emergency", where=f" near {area}", said=said[:300] or "an emergency"),
+                                urgent=True, name=best["name"], sms_name=best.get("sms_name") or best["name"])
+        keep = [{"d": f["d"], "id": f["id"], "n": f["name"], "a": f["address"], "tv": f.get("travel") or ""} for f in free[:3]]
+        full = self.words(gw, "health_emergency_full", full=found[0]["name"]) if found[0] is not best else ""   # a nearer hospital is full: the caller is told why
+        text = self.words(gw, "health_emergency_found", name=best["name"], address=best["address"], travel=best.get("travel") or "", full=full)
+        return self.ask(gw, "emergency_reached", "health.emergency", req, text, places=keep, said=said[:300])
+
+    async def emergency_hold(self, gw, req: Request, places: list[dict], transcript: str) -> Outcome:
+        """The caller could not reach the emergency number, or will not call it: the nearest hospital with a free place is asked to keep one, and the next
+        one if it has just filled up. The caller hears and is texted where to go and the reference. Nothing is said about an ambulance being sent."""
+        sorry = self.words(gw, "health_emergency_no_ambulance") if "ambulance" in tokens(transcript) else ""
+        for place in places:
+            spec = self.spec_of(place)
+            answer = await self.provider_call(gw, spec, "emergency_hold", {"facility_id": place["id"]})
+            held = (answer or {}).get("hold") if (answer or {}).get("ok") else None
+            if not held:
+                continue
+            code = held["code"]
+            gw.st["emergency_hold"] = {"n": place["n"], "a": place["a"], "code": code}
+            self.note(gw, "held", provider=spec.label if spec else place["d"], place=place["n"], code=code)
+            texted = await self.text_caller(gw, self.words(gw, "health_sms_emergency_hold", name=place["n"], address=place["a"], code=code))
+            said = sorry + self.words(gw, "health_emergency_held", name=place["n"], address=place["a"], travel=place["tv"], code=" ".join(code.split("-")[1]))
+            return self.say(gw, said + (" " + self.words(gw, "health_text_sent_emergency") if texted else ""), "health_emergency_held")
+        near = places[0]
+        return self.say(gw, sorry + self.words(gw, "health_emergency_all_full", name=near["n"], address=near["a"], travel=near["tv"]), "health_emergency_all_full")
+
     # ---- find ------------------------------------------------------------------------------------------
 
     async def find(self, gw, req: Request) -> Outcome:
-        emergency = req.need == "emergency care" or req.red_flag
-        if emergency:
-            req.need = "emergency care"
+        if req.need == "emergency care" or req.red_flag:     # someone may be in danger: the emergency help, never a list of clinics
+            return await self.emergency(gw, req.utterance or "", area=req.area)
         if not req.area:
             return self.ask_where(gw, "health.find_facility", req)
         found, reachable = await self.places(gw, req, kind="pharmacies" if req.need == "pharmacy" else "clinics", limit=3)
         if not reachable:
             return self.nothing_reachable(gw, req)
         if not found:
-            if emergency:
-                return self.say(gw, self.words(gw, "health_emergency_none"), "health_emergency_none")
             return self.say(gw, self.words(gw, "health_find_none"), "health_find_none")
         now = self.now()
         bookable = [f for f in found if f["bookable"]]
-        if bookable and not emergency and len(bookable) > 1:
+        if bookable and len(bookable) > 1:
             # Several clinics: the caller hears each one with what decides between them (waiting time and fee), then is asked whether to book.
             options = self.compact(bookable)
             text = self.options_text(gw, options, req.area, req.need) + " " + self.words(gw, "health_find_offer_many")
             return self.ask(gw, "offer_book", "health.find_facility", req, text, options=options)
-        what = "emergency care" if emergency else "pharmacy" if req.need == "pharmacy" else f"place for {speak.need_phrase(req.need)}" if req.need else "place"
-        text = self.words(gw, "health_find_nearest", what=what, place=speak.place_line(found[0], now, queue=not emergency, fee=not emergency))
-        if emergency:
-            text = self.words(gw, "health_emergency_call") + " " + text
+        what = "pharmacy" if req.need == "pharmacy" else f"place for {speak.need_phrase(req.need)}" if req.need else "place"
+        text = self.words(gw, "health_find_nearest", what=what, place=speak.place_line(found[0], now))
         if found[1:]:
-            text += " " + self.words(gw, "health_find_others", others="; ".join(speak.option_line(f, brief=emergency) for f in found[1:3]))
-        if emergency:   # a person at the nearest emergency care is told, on their own front desk, that this caller described an emergency
-            place = next((f for f in found if f.get("emergency")), found[0])
-            said = req.utterance or "an emergency was described"
-            filed = await self.file_request(gw, self.spec_of(place), "emergency", self.words(gw, "health_staff_emergency", where=f" near {req.area}" if req.area else "", said=said),
-                                            urgent=True, name=place["name"], sms_name=place.get("sms_name") or place["name"])
-            if filed:
-                text += " " + self.words(gw, "health_find_told", name=place.get("sms_name") or place["name"])
-        if emergency or not bookable:
+            text += " " + self.words(gw, "health_find_others", others="; ".join(speak.option_line(f) for f in found[1:3]))
+        if not bookable:
             return self.say(gw, text, "health_find")
         return self.ask(gw, "offer_book", "health.find_facility", req, f"{text} {self.words(gw, 'health_find_offer_one')}", options=self.compact(bookable))
+
+    def add_trips(self, gw, options: list[dict], origin: str) -> None:
+        """Puts the trip from where the caller is into options that were listed before Talk knew it, just after each place's name and kind."""
+        places = [{"name": o["n"], "lat": o.get("la"), "lon": o.get("lo"), "area": o.get("pa")} for o in options]
+        self.with_travel(gw, places, origin)
+        for o, p in zip(options, places):
+            if p.get("travel"):
+                head = f"{o['n']}, {speak.article(o['k'])}"
+                o["tv"], o["eta"] = p["travel"], p["eta"]
+                o["line"] = f"{head}, {p['travel']}{o['line'][len(head):]}" if o["line"].startswith(head) else o["line"]
 
     @staticmethod
     def compact(found: list[dict]) -> list[dict]:
         """What is kept between turns about each option: enough to name it, say it again and ask its provider about it."""
         return [{"d": f["d"], "id": f["id"], "n": f["name"], "sn": f.get("sms_name") or f["name"], "line": speak.option_line(f), "fee": f.get("fee", 0), "w": f.get("wait_minutes", 0),
-                 "km": f.get("km"), "k": speak.kind_phrase(f), "services": f.get("services", [])} for f in found]
+                 "km": f.get("km"), "k": speak.kind_phrase(f), "services": f.get("services", []), "eta": f.get("eta"), "tv": f.get("travel"),
+                 "la": f.get("lat"), "lo": f.get("lon"), "pa": f.get("area")} for f in found]
 
     def options_text(self, gw, options: list[dict], area: str | None, need: str | None = None, lead: str = "") -> str:
         """The places the caller can choose from, each with what decides between them: "I found three places near Surulere for antenatal care. The first is ..."."""
@@ -442,7 +542,7 @@ class HealthAdapter(ServiceAdapter):
         if area and not req.area:
             req.area = area.name
         query = text if text and not (area and not self.names_a_place(text, area.name)) else None
-        found, reachable = await self.places(gw, Request(area=req.area), kind=None if tool_id != "health.book_appointment" else "clinics", bookable=bookable, query=query, limit=MAX_OPTIONS)
+        found, reachable = await self.places(gw, Request(area=req.area, origin=req.origin), kind=None if tool_id != "health.book_appointment" else "clinics", bookable=bookable, query=query, limit=MAX_OPTIONS)
         if not reachable:
             return None, self.nothing_reachable(gw)
         if not found:
@@ -497,7 +597,7 @@ class HealthAdapter(ServiceAdapter):
         if area and not req.area:
             req.area = area.name
         query = text if text and not (area and not self.names_a_place(text, area.name)) else None
-        found, reachable = await self.places(gw, Request(need=need, area=req.area), kind="clinics", bookable=True, query=query, limit=MAX_OPTIONS)
+        found, reachable = await self.places(gw, Request(need=need, area=req.area, origin=req.origin), kind="clinics", bookable=True, query=query, limit=MAX_OPTIONS)
         if not reachable:
             return self.nothing_reachable(gw)
         if not found:
@@ -511,28 +611,59 @@ class HealthAdapter(ServiceAdapter):
 
     async def book_at(self, gw, req: Request, place: dict) -> Outcome:
         """The place is settled. Ask for the day and time if they were not said, then offer the first real slot that fits."""
+        if not req.origin and not req.from_asked and place.get("la") is not None:
+            req.from_asked = True
+            key = "health_ask_from_area" if req.area else "health_ask_from"
+            return self.ask(gw, "from", "health.book_appointment", req, self.words(gw, key, place=place["n"], area=req.area), place=place)
         found = parse_when(req.when or "", self.now())
+        if said_nothing_about_time(found) and wants_earliest(req.utterance):     # "Please book me the earliest time at Aguda."
+            return await self.offer_slot(gw, req, place, found, note=self.words(gw, "health_note_earliest"))
         if said_nothing_about_time(found):
             return self.ask(gw, "when", "health.book_appointment", req, self.words(gw, "health_ask_when", place=place["n"]), place=place)
         return await self.offer_slot(gw, req, place, found)
 
     async def offer_slot(self, gw, req: Request, place: dict, found: dict, note: str = "") -> Outcome:
         spec, now = self.spec_of(place), self.now()
-        args = {"facility_id": place["id"], "count": 1, **({"day": found["day"].isoformat()} if found["day"] else {}),
+        args = {"facility_id": place["id"], "count": 6, **({"day": found["day"].isoformat()} if found["day"] else {}),
                 **({"window": list(found["window"])} if found["window"] else {}), **({"at": found["at"]} if found["at"] is not None else {})}
         answer = await self.provider_call(gw, spec, "slots", args)
         if answer is None:
             return self.nothing_reachable(gw)
-        slots = answer.get("slots", [])
-        if not slots and found["day"]:   # nothing that day: the next free time after it
-            answer = await self.provider_call(gw, spec, "slots", {"facility_id": place["id"], "count": 1})
-            slots = (answer or {}).get("slots", [])
+        slots, unreachable = self.reachable(req, place, answer.get("slots", []), now)
+        if not slots and (found["day"] or unreachable):   # nothing that day, or nothing the caller can reach in time: the next free time after it
+            after = (found["day"] or now.date()) + timedelta(days=1)
+            more = {"facility_id": place["id"], "count": 6, **({"day": after.isoformat()} if unreachable else {})}
+            answer = await self.provider_call(gw, spec, "slots", more)
+            slots, _ = self.reachable(req, place, (answer or {}).get("slots", []), now)
             note = note or self.words(gw, "health_note_nothing_free", day=say_on_day(found["day"], now.date()), place=place["n"])
         if not slots:
             return self.say(gw, self.words(gw, "health_slots_none", place=place["n"]), "health_book_none")
-        start = datetime.fromisoformat(slots[0])
-        return self.ask(gw, "confirm", "health.book_appointment", req,
-                        self.words(gw, "health_offer_slot", note=note, place=place["n"], day=say_on_day(start.date(), now.date()), time=say_time(start)), place=place, slot=slots[0])
+        start, leave = datetime.fromisoformat(slots[0][0]), slots[0][1]
+        day, time_ = say_on_day(start.date(), now.date()), say_time(start)
+        if leave:
+            depart, trip = leave
+            question = self.words(gw, "health_offer_slot_leave", note=note, place=place["n"], day=day, time=time_, area=req.origin, span=travel.say_span(trip),
+                                  leave=say_time(depart) if depart.date() == start.date() else f"{say_time(depart)} {say_on_day(depart.date(), now.date())}")
+            self.note(gw, "travel", origin=req.origin, slot=f"{day} at {time_}", leave_by=say_time(depart), trip=travel.say_span(trip))
+        else:
+            question = self.words(gw, "health_offer_slot", note=note, place=place["n"], day=day, time=time_)
+        return self.ask(gw, "confirm", "health.book_appointment", req, question, place=place, slot=slots[0][0])
+
+    def reachable(self, req: Request, place: dict, slots: list[str], now: datetime) -> tuple[list[tuple[str, tuple | None]], bool]:
+        """The offered times the caller can still reach, each with when to leave, and whether any time was left out because it could not be reached.
+        Without the caller's area every time is kept, with no leaving time."""
+        if not req.origin or place.get("la") is None:
+            return [(s, None) for s in slots], False
+        kept, dropped = [], False
+        for s in slots:
+            plan = travel.leave_by(req.origin, place["la"], place["lo"], place.get("pa"), datetime.fromisoformat(s), now)
+            if plan is None:
+                kept.append((s, None))
+            elif plan[2]:
+                kept.append((s, plan[:2]))
+            else:
+                dropped = True
+        return kept, dropped
 
     async def make_booking(self, gw, req: Request, place: dict, slot: str) -> Outcome:
         visit = req.need if req.need in place.get("services", []) else "general consultation"
@@ -685,6 +816,11 @@ class HealthAdapter(ServiceAdapter):
         if step == "choose":
             options = pending["options"]
             index = await self.pick_option(gw, transcript, options)
+            here = gazetteer.caller_location(transcript)
+            if index is None and here and here.name != req.origin:   # the caller said where they are: the same places again, now with the trip from there
+                req.origin = here.name
+                self.add_trips(gw, options, req.origin)
+                return self.ask(gw, "choose", tool_id, req, self.options_question(gw, options, None, lead=self.words(gw, "health_options_from", area=here.name)), options=options)
             if index is None:
                 if tries + 1 >= MAX_TRIES:
                     st["pending"] = None
@@ -716,16 +852,81 @@ class HealthAdapter(ServiceAdapter):
                 req.drug = fresh.drug or transcript.strip()[:80]
             elif tool_id == "health.find_facility":
                 req.area = (area.name if area else None) or fresh.area
+                req.origin = req.area or req.origin     # Talk asked which area the caller is in, so the answer is where they are
             else:
                 req.area = (area.name if area else None) or fresh.area or req.area
                 req.facility = fresh.facility or transcript.strip()[:80]
+                here = gazetteer.caller_location(transcript) or (area if area and not self.names_a_place(transcript, area.name) else None)
+                req.origin = here.name if here else req.origin     # "which area of Lagos are you in?" was answered with an area, so that is where the caller is
             return await self.start(gw, tool_id, req)
+
+        if step == "emergency_check":     # "Is someone in danger right now?"
+            st["pending"] = None
+            said = pending.get("said") or transcript
+            yes = answer_of(transcript) == "yes" or floor.read(transcript).level == floor.EMERGENCY
+            if not yes and answer_of(transcript) != "no":
+                yes = (await self.meaning(gw, pending, transcript)).meaning == "yes"
+            if yes:
+                self.note(gw, "urgency", level=floor.EMERGENCY, source="caller", hits=[])
+                return await self.emergency(gw, f"{said} {transcript}")
+            return await self.turn(gw, said, 1.0)      # nobody is in danger: the first request is answered as it was meant
+
+        if step == "emergency_where":
+            here = gazetteer.match_area(transcript) or gazetteer.match_area((await self.meaning(gw, pending, transcript)).area or "")
+            st["pending"] = None
+            if here:
+                return await self.emergency_route(gw, req, here.name, f"{pending.get('said', '')} {transcript}".strip())
+            if tries + 1 >= MAX_TRIES:
+                return self.say(gw, self.words(gw, "health_giveup_emergency"), "health_where_dropped")
+            req.tries = tries + 1
+            return self.ask(gw, "emergency_where", "health.emergency", req, self.words(gw, "health_emergency_ask_where_again"), said=pending.get("said", ""))
+
+        if step == "emergency_reached":   # "Were you able to reach 112?" Anything other than a clear yes is taken as no: the caller is helped either way
+            st["pending"] = None
+            reached = answer_of(transcript) == "yes" and "ambulance" not in tokens(transcript)
+            if answer_of(transcript) is None and "ambulance" not in tokens(transcript):
+                reached = (await self.meaning(gw, pending, transcript)).meaning == "yes"
+            places = pending.get("places") or []
+            if reached and places:
+                return self.say(gw, self.words(gw, "health_emergency_reached", name=places[0]["n"]), "health_emergency_reached")
+            return await self.emergency_hold(gw, req, places, transcript)
+
+        if step == "from":
+            place = pending["place"]
+            area = gazetteer.match_area(transcript) or gazetteer.match_area((await self.read(gw, transcript)).area or "")
+            st["pending"] = None
+            if area:
+                req.origin = area.name
+            elif req.area and answer_of(transcript) == "yes":     # "Will you be travelling from Surulere?" "Yes, please."
+                req.origin = req.area
+            else:
+                meant = await self.meaning(gw, pending, transcript)
+                named = gazetteer.match_area(meant.area or "") if meant.meaning == "gave_it" else None
+                if named:
+                    req.origin = named.name
+                elif meant.meaning == "yes" and req.area:
+                    req.origin = req.area
+                elif meant.meaning == "something_else":
+                    return None
+            self.take_time(req, transcript)
+            return await self.book_at(gw, req, place)
 
         if step == "when":
             place, now = pending["place"], self.now()
             found = parse_when(transcript, now)
             if said_nothing_about_time(found):
                 found = parse_when((await self.read(gw, transcript)).when or "", now)
+            if said_nothing_about_time(found):
+                meant = await self.meaning(gw, pending, transcript) if not wants_earliest(transcript) else Meaning(meaning="earliest")
+                if meant.meaning == "earliest":     # "When is the next available slot?": the first time the caller can reach
+                    st["pending"] = None
+                    req.when = None
+                    return await self.offer_slot(gw, req, place, parse_when("", now), note=self.words(gw, "health_note_earliest"))
+                if meant.meaning == "gave_it" and meant.when:
+                    found = parse_when(meant.when, now)
+                if meant.meaning == "something_else":   # a different request: it is handled as one
+                    st["pending"] = None
+                    return None
             if said_nothing_about_time(found):
                 if tries + 1 >= MAX_TRIES:
                     st["pending"] = None
@@ -795,10 +996,34 @@ class HealthAdapter(ServiceAdapter):
         if any(w in said for w in ("cheaper", "cheapest", "cheap", "lowest")):
             return min(range(len(options)), key=lambda i: options[i]["fee"])
         if any(w in said for w in ("nearest", "closest", "closer")):
-            return min(range(len(options)), key=lambda i: options[i]["km"] if options[i]["km"] is not None else 99)
+            return min(range(len(options)), key=lambda i: self.how_far(options[i]))
         if any(w in said for w in ("quicker", "quickest", "faster", "fastest", "shorter", "shortest")):
             return min(range(len(options)), key=lambda i: options[i]["w"])
         return None
+
+    async def meaning(self, gw, pending: dict, text: str) -> Meaning:
+        """What the caller meant by their answer to the question Talk had just asked, read by the model with the question in view. Only words the caller
+        said count as a day, a time or an area. When the model cannot answer, the meaning is unclear and Talk asks again, as it did before."""
+        question = (pending.get("question") or "")[-300:]
+        schema = {"type": "object", "additionalProperties": False, "required": ["meaning", "when", "area"],
+                  "properties": {"meaning": {"type": "string", "enum": MEANINGS},
+                                 "when": {"anyOf": [{"type": "string"}, {"type": "null"}]}, "area": {"anyOf": [{"type": "string"}, {"type": "null"}]}}}
+        system = ("REPLY\nTalk, a health line in Lagos, asked a caller the QUESTION below, and the caller answered. Say what the caller meant.\n"
+                  "meaning: gave_it (they answered what was asked), earliest (they want the first free time, for example the next available slot or as soon as "
+                  "possible), yes, no, something_else (they asked for something different), or unclear.\n"
+                  "when: the day and time they asked for, in their own words, or null. area: the part of Lagos they named, in their own words, or null.\n"
+                  f"QUESTION: {question or 'not known'}")
+        started = time.perf_counter()
+        try:
+            got, _raw = await gw.svc.llm.extract(Meaning, system, text, json_schema=schema)
+        except Exception as exc:
+            log.warning("the model did not read the answer: %s", exc)
+            return Meaning()
+        said = set(tokens(text))
+        keep = lambda v: v.strip() if isinstance(v, str) and v.strip() and set(tokens(v)) <= said else None   # noqa: E731  only the caller's own words
+        meant = Meaning(meaning=got.meaning if got.meaning in MEANINGS else "unclear", when=keep(got.when), area=keep(got.area))
+        self.note(gw, "meant", meaning=meant.meaning, ms=int((time.perf_counter() - started) * 1000))
+        return meant
 
     async def pick_option(self, gw, text: str, options: list[dict]) -> int | None:
         """Which of the offered places the caller means. The caller's words settle it when they can (see pick_by_words); the model reads it only when they do not."""

@@ -32,6 +32,14 @@ from ..textutil import e164
 log = logging.getLogger("sofa.voice")
 router = APIRouter()
 
+@dataclass(frozen=True)
+class Line:
+    """How one telephony provider is answered: its voice XML (sofa/voicexml.py or sofa/twiml.py) and where its callbacks live under /voice."""
+    xml: object
+    prefix: str = ""
+
+
+AT = Line(voicexml)     # the first provider, whose callbacks are /voice/inbound, /voice/turn and so on
 TEXT_NUMBER = "+2349990000"  # a typed conversation is a test call from a number that starts like this, followed by three digits (texts to it are never sent)
 
 
@@ -52,34 +60,34 @@ def _check_secret(request: Request, secret: str) -> None:
         raise HTTPException(status_code=404)
 
 
-def _url(request: Request, path: str, secret: str) -> str:
-    return f"{request.app.state.svc.settings.public_base_url.rstrip('/')}/voice/{path}/{secret}"
+def _url(request: Request, path: str, secret: str, line: Line = AT) -> str:
+    return f"{request.app.state.svc.settings.public_base_url.rstrip('/')}/voice/{line.prefix}{path}/{secret}"
 
 
 WAIT_STAGES = 5  # wait_1 .. wait_5, then wait_giveup
 
 
-async def _giveup(request: Request, secret: str, key: str) -> Response:
+async def _giveup(request: Request, secret: str, key: str, line: Line = AT) -> Response:
     """The answer is not coming in time: say so, ask whether there is anything else, and listen. If the caller has nothing more, the
     silence ends the call (max_silences): a line left open costs money."""
     svc = request.app.state.svc
     try:
         urls = [(await svc.audio.speak(render(k, {}), LANG))[0] for k in (key, "call_anything_else")]
-        return _xml(voicexml.record(urls, _url(request, "turn", secret), svc.settings.record_timeout_seconds, svc.settings.record_max_seconds))
+        return _xml(line.xml.record(urls, _url(request, "turn", secret, line), svc.settings.record_timeout_seconds, svc.settings.record_max_seconds))
     except Exception:
-        return await _fallback(request, secret, redirect_to=_url(request, "turn", secret), key=key)
+        return await _fallback(request, secret, redirect_to=_url(request, "turn", secret, line), key=key, line=line)
 
 
-async def _fallback(request: Request, secret: str, redirect_to: str | None = None, key: str = "filler") -> Response:
+async def _fallback(request: Request, secret: str, redirect_to: str | None = None, key: str = "filler", line: Line = AT) -> Response:
     """Never an empty body: a cached holding message + Redirect, or a goodbye."""
     svc = request.app.state.svc
     try:
         url, _ = await svc.audio.speak(render(key, {}), LANG)
         if redirect_to:
-            return _xml(voicexml.redirect(redirect_to, [url]))
-        return _xml(voicexml.play_and_hangup([url]))
+            return _xml(line.xml.redirect(redirect_to, [url]))
+        return _xml(line.xml.play_and_hangup([url]))
     except Exception:
-        return _xml(voicexml.say_and_hangup("Sorry, please call again."))
+        return _xml(line.xml.say_and_hangup("Sorry, please call again."))
 
 
 # ---- opening and closing a call ----------------------------------------------------------------------
@@ -137,19 +145,19 @@ def close_call(svc, session_id: str, duration_s: int | None = None) -> None:
     svc.sessions.delete(session_id)
 
 
-async def _inbound_call(request: Request, secret: str, form, caller: str, dest: str) -> Response:
+async def _inbound_call(request: Request, secret: str, form, caller: str, dest: str, line: Line = AT, session_id: str | None = None) -> Response:
     """Someone phoned Talk: greet them and ask what they need."""
     svc = request.app.state.svc
     try:
-        text = await open_call(svc, str(form.get("sessionId") or uuid.uuid4()), caller, dest)
+        text = await open_call(svc, session_id or str(form.get("sessionId") or uuid.uuid4()), caller, dest)
         if text is None:
-            return _xml(voicexml.say_and_hangup("Sorry, please try again later."))
+            return _xml(line.xml.say_and_hangup("Sorry, please try again later."))
         audio_url, _ = await svc.audio.speak(text, LANG)
-        body = voicexml.record([audio_url], _url(request, "turn", secret), svc.settings.record_timeout_seconds, svc.settings.record_max_seconds)
+        body = line.xml.record([audio_url], _url(request, "turn", secret, line), svc.settings.record_timeout_seconds, svc.settings.record_max_seconds)
         return _xml(body, text, request)
     except Exception:
         log.exception("orchestrator inbound failed")
-        return await _fallback(request, secret)
+        return await _fallback(request, secret, line=line)
 
 
 @router.api_route("/voice/inbound/{secret}", methods=["GET", "HEAD"], include_in_schema=False)
@@ -174,12 +182,12 @@ async def inbound(secret: str, request: Request):
     return await _inbound_call(request, secret, form, e164(str(form.get("callerNumber", ""))), dest or e164(orchestrator))
 
 
-def _next_prompt(svc, outcome: Outcome, prompts: list[str], secret: str) -> str:
+def _next_prompt(svc, outcome: Outcome, prompts: list[str], secret: str, line: Line = AT) -> str:
     """Voice XML for what happens after Talk speaks: hang up, or listen for speech."""
     base = svc.settings.public_base_url.rstrip("/")
     if outcome.end_call:
-        return voicexml.play_and_hangup(prompts)
-    return voicexml.record(prompts, f"{base}/voice/turn/{secret}", svc.settings.record_timeout_seconds, svc.settings.record_max_seconds)
+        return line.xml.play_and_hangup(prompts)
+    return line.xml.record(prompts, f"{base}/voice/{line.prefix}turn/{secret}", svc.settings.record_timeout_seconds, svc.settings.record_max_seconds)
 
 
 async def _speak_outcome(svc, outcome: Outcome) -> list[str]:
@@ -208,13 +216,15 @@ class Heard:
     model: str
 
 
-async def _process_turn(svc, session_id: str, recording_url: str | None, secret: str, turn_id: uuid.UUID) -> tuple[str, str, bool]:
-    """Run one caller turn. Returns (voice xml, reply text, ended)."""
-    outcome, prompts = await run_turn(svc, session_id, recording_url, turn_id)
-    return _next_prompt(svc, outcome, prompts, secret), outcome.text, outcome.end_call
+async def _process_turn(svc, session_id: str, recording_url: str | None, secret: str, turn_id: uuid.UUID, line: Line = AT,
+                        auth: tuple[str, str] | None = None) -> tuple[str, str, bool]:
+    """Run one caller turn. Returns (voice xml, reply text, ended). `auth` is what the provider asks for before it gives out a recording, if anything."""
+    outcome, prompts = await run_turn(svc, session_id, recording_url, turn_id, auth=auth)
+    return _next_prompt(svc, outcome, prompts, secret, line), outcome.text, outcome.end_call
 
 
-async def run_turn(svc, session_id: str, recording_url: str | None, turn_id: uuid.UUID, wav16: bytes | None = None, stream: bool = False) -> tuple[Outcome, list]:
+async def run_turn(svc, session_id: str, recording_url: str | None, turn_id: uuid.UUID, wav16: bytes | None = None, stream: bool = False,
+                   auth: tuple[str, str] | None = None) -> tuple[Outcome, list]:
     """Run one caller turn and return the reply with the addresses of its audio clips. A call over the callback path hands in the recording's address;
     a streamed call hands in the speech itself (`wav16`, already cut out and at 16 kHz) with a recording_url of "stream", and None for "nobody spoke".
     With `stream` the clips come back as texts, not yet voiced: the streamed call voices them as it speaks."""
@@ -226,7 +236,7 @@ async def run_turn(svc, session_id: str, recording_url: str | None, turn_id: uui
         if wav16 is not None:  # a streamed call: the speech is already here
             raw = audio = wav16
         else:
-            raw = await fetch_recording(recording_url, allowed=svc.settings.recording_hosts)
+            raw = await fetch_recording(recording_url, allowed=svc.settings.recording_hosts, auth=auth)
             audio = to_16k_mono(raw)
         turn.audio_path = svc.audio.save_call_audio(call.id, turn.seq, raw)
         lat["audio_fetch"] = int((time.perf_counter() - t) * 1000)
@@ -254,6 +264,28 @@ async def run_text_turn(svc, session_id: str, text: str) -> dict:
     if outcome.end_call:
         close_call(svc, session_id)
     return {"reply": outcome.text, "ended": outcome.end_call, "action": outcome.action.split("|")[0], "trace": trace}
+
+
+async def run_spoken_turn(svc, session_id: str, audio: bytes) -> dict:
+    """One spoken turn of a call made from the browser on the Try it page: the same speech recognition, front desk and voice as a phone call. The speech is
+    not kept. Returns what was heard, the reply with the addresses of its audio, whether the call ended and the trace of the turn."""
+
+    async def hear(turn: CallTurn, call: Call, lat: dict) -> Heard | None:
+        t = time.perf_counter()
+        wav = await asyncio.to_thread(to_16k_mono, audio)
+        lat["audio_fetch"] = int((time.perf_counter() - t) * 1000)
+        if wav_rms(wav) < svc.settings.silence_rms:   # nothing was said, only the room
+            return None
+        t = time.perf_counter()
+        result = await svc.asr.transcribe(wav, LANG)
+        lat["asr"] = int((time.perf_counter() - t) * 1000)
+        return Heard(result.text, result.confidence, result.model)
+
+    outcome, prompts, trace = await _run(svc, session_id, uuid.uuid4(), None, hear)
+    if outcome.end_call:
+        close_call(svc, session_id)
+    heard = next((str(e.get("text") or "") for e in trace if e.get("step") == "heard"), "")
+    return {"heard": heard, "reply": outcome.text, "audio": prompts, "ended": outcome.end_call, "action": outcome.action.split("|")[0], "trace": trace}
 
 
 async def _run(svc, session_id: str, turn_id: uuid.UUID, recording_url: str | None, hear, *, stream: bool = False,
@@ -341,7 +373,7 @@ async def turn(secret: str, request: Request):
     return await _reply_or_hold(request, secret, task)
 
 
-async def _reply_or_hold(request: Request, secret: str, task: asyncio.Task) -> Response:
+async def _reply_or_hold(request: Request, secret: str, task: asyncio.Task, line: Line = AT) -> Response:
     """The reply if it is ready in a moment; otherwise a holding message now and the reply when it is ready."""
     svc = request.app.state.svc
     done, _ = await asyncio.wait({task}, timeout=svc.settings.filler_after_seconds)
@@ -351,20 +383,25 @@ async def _reply_or_hold(request: Request, secret: str, task: asyncio.Task) -> R
             return _xml(result[0], result[1], request)
         except Exception:
             log.exception("voice task failed")
-            return await _fallback(request, secret, redirect_to=_url(request, "turn", secret))  # carry on: never hang up on a caller
+            return await _fallback(request, secret, redirect_to=_url(request, "turn", secret, line), line=line)  # carry on: never hang up on a caller
     turn_id = str(uuid.uuid4())
     svc.turn_tasks[turn_id] = task
-    return await _fallback(request, secret, redirect_to=f"{_url(request, 'continue', secret)}/{turn_id}?n=1")
+    return await _fallback(request, secret, redirect_to=f"{_url(request, 'continue', secret, line)}/{turn_id}?n=1", line=line)
 
 
 @router.post("/voice/continue/{secret}/{turn_id}")
 async def continue_turn(secret: str, turn_id: str, request: Request):
     _check_secret(request, secret)
+    return await _continue(request, secret, turn_id)
+
+
+async def _continue(request: Request, secret: str, turn_id: str, line: Line = AT) -> Response:
+    """The caller has heard a holding message: the reply if it is ready now, otherwise the next holding message, and after the last one an apology."""
     svc = request.app.state.svc
     task = svc.turn_tasks.get(turn_id)
-    again = _url(request, "turn", secret)
+    again = _url(request, "turn", secret, line)
     if not task:
-        return await _fallback(request, secret, redirect_to=again)
+        return await _fallback(request, secret, redirect_to=again, line=line)
     n = int(request.query_params.get("n", "1") or 1)
     done, _ = await asyncio.wait({task}, timeout=svc.settings.filler_every_seconds)
     if task in done:
@@ -374,12 +411,12 @@ async def continue_turn(secret: str, turn_id: str, request: Request):
             return _xml(result[0], result[1], request)
         except Exception:
             log.exception("continue failed")
-            return await _fallback(request, secret, redirect_to=again)
+            return await _fallback(request, secret, redirect_to=again, line=line)
     if n > WAIT_STAGES:  # long enough: apologise, keep the line open and listen again
         svc.turn_tasks.pop(turn_id, None)
-        return await _giveup(request, secret, "wait_giveup")
+        return await _giveup(request, secret, "wait_giveup", line=line)
     # still working: the next holding message, then wait again
-    return await _fallback(request, secret, redirect_to=f"{_url(request, 'continue', secret)}/{turn_id}?n={n + 1}", key=f"wait_{n}")
+    return await _fallback(request, secret, redirect_to=f"{_url(request, 'continue', secret, line)}/{turn_id}?n={n + 1}", key=f"wait_{n}", line=line)
 
 
 @router.post("/voice/events/{secret}")

@@ -122,6 +122,9 @@ WANTS = {"health.find_facility": "to find a clinic, a hospital or a pharmacy", "
          "health.cancel_appointment": "to cancel an appointment", "health.drug_availability": "to know whether a medicine is in stock",
          "health.ask_the_centre": "an answer from a facility's patient guide", "chat": "only to say hello or thank you",
          "human": "to speak to a person", "health": "help with health services"}
+URGENCY_SOURCES = {"floor": "Keyword floor", "model": "Language model", "both": "Keyword floor and language model", "caller": "The caller said so"}
+MEANT = {"gave_it": "The caller answered the question.", "earliest": "The caller wants the earliest free time.", "yes": "The caller said yes.",
+         "no": "The caller said no.", "something_else": "The caller asked for something different."}
 REQUEST_KINDS = {"question": "A question for the staff", "person": "A wish to speak to a person", "emergency": "An emergency"}
 
 
@@ -184,6 +187,32 @@ def describe_trace(trace: list[dict] | None, show_words: bool = True) -> list[di
                 step["text"] = " ".join(f"{label}: {scrub(str(v))}." for label, v in found)
             else:
                 step["text"] = "The details are not shown here."
+        elif kind == "urgency":
+            step["title"] = "Urgency"
+            level = str(e.get("level") or "")
+            step["text"] = ("Someone may be in danger. 112 first, then the nearest hospital with a free emergency place." if level == "emergency"
+                            else "It might be an emergency. 112 first, then one question." if level == "possible" else "No sign of danger.")
+            step["meta"] = URGENCY_SOURCES.get(str(e.get("source") or ""), "")
+        elif kind == "held":
+            step["title"] = "Emergency place held"
+            where = f" at {scrub(str(e.get('place')))}" if show_words and e.get("place") else ""
+            step["text"] = f"{scrub(str(e.get('provider') or 'The provider'))} is keeping an emergency place{where}."
+            step["meta"] = f"Hold {scrub(str(e.get('code') or ''))}"
+            desk = desk_of(e.get("provider") or "")
+            step["link"] = {"label": "Front desk", "href": desk} if desk else None
+        elif kind == "meant":
+            step["title"] = "Understood"
+            step["text"] = MEANT.get(str(e.get("meaning")), "It was not clear what the caller meant by the answer.")
+            step["meta"] = " · ".join(f for f in ("Language model", _ms(e.get("ms"))) if f)
+        elif kind == "travel":
+            step["title"] = "Travel"
+            if not show_words:
+                step["text"] = "The trip was worked out from the caller's area. The details are not shown here."
+            elif e.get("leave_by"):
+                step["text"] = f"From {scrub(str(e.get('origin')))}, the trip takes {scrub(str(e.get('trip')))}. Leave by {scrub(str(e.get('leave_by')))} for {scrub(str(e.get('slot')))}."
+            else:
+                step["text"] = f"From {scrub(str(e.get('origin')))} at {scrub(str(e.get('hour')))}: {scrub(str(e.get('trips')))}."
+            step["meta"] = "Lagos traffic by hour · no network call"
         elif kind == "booked":
             step["title"] = "Booked"
             where = f" at {scrub(str(e.get('place')))}, {scrub(str(e.get('when')))}" if show_words and e.get("place") else ""

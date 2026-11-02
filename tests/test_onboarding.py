@@ -556,5 +556,9 @@ def test_a_question_the_guide_does_not_cover_goes_to_the_new_hospitals_front_des
 def test_a_closed_place_is_described_in_a_natural_sentence():
     from sofa.health import speak
 
-    closed = {"name": "Surulere Care Clinic", "owner": "private", "kind": "clinic", "km": 0.3, "open_now": False, "all_day": False, "fee": 8000}
-    assert speak.option_line(closed) == "Surulere Care Clinic, a private clinic, less than a kilometre away, which is closed now, and with a consultation fee of 8,000 naira"
+    closed = {"name": "Surulere Care Clinic", "owner": "private", "kind": "clinic", "km": 0.3, "open_now": False, "all_day": False, "fee": 8000,
+              "travel": "about 10 minutes away by road with the usual traffic at this hour"}
+    assert speak.option_line(closed) == ("Surulere Care Clinic, a private clinic, about 10 minutes away by road with the usual traffic at this hour, which is closed now, "
+                                         "and with a consultation fee of 8,000 naira")
+    del closed["travel"]    # until the caller has said where they are, no distance is spoken at all
+    assert speak.option_line(closed) == "Surulere Care Clinic, a private clinic, which is closed now, and with a consultation fee of 8,000 naira"

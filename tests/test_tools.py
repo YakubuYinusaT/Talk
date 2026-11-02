@@ -206,7 +206,8 @@ def test_the_answer_format_lists_every_registered_operation_and_the_fixed_choice
 
 def test_every_field_in_the_answer_format_is_required_and_nothing_extra_is_allowed():
     wire = understanding.schema(sorted(HEALTH_TOOLS), ["health"])
-    assert set(wire["required"]) == set(wire["properties"]) == {"action", "answer"}
+    assert set(wire["required"]) == set(wire["properties"]) == {"urgency", "action", "answer"}
+    assert wire["properties"]["urgency"]["enum"] == ["none", "possible", "emergency"]
     assert wire["additionalProperties"] is False
     assert wire["properties"]["answer"]["enum"] == ["yes", "no", "none"]
 

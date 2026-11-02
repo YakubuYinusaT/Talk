@@ -61,6 +61,16 @@ def answer_of(text: str, cancelling: bool = False) -> str | None:
     return None
 
 
+# A caller who wants the first time there is, however they put it.
+EARLIEST = re.compile(r"\b(next available|next free|first available|first free|earliest|soonest|as soon as (possible|you can)|asap|any ?time|whenever|"
+                      r"any day|whichever time|what(ever)? you have|the next one|next slot|closest (time|slot|date))\b")
+
+
+def wants_earliest(text: str) -> bool:
+    """True when the caller asks for the first free time rather than naming one."""
+    return bool(EARLIEST.search(" ".join(re.findall(r"[a-z0-9]+", (text or "").lower()))))
+
+
 def parse_when(text: str, now: datetime) -> dict:
     """What a caller asked for: {"day": date | None, "window": (from_minute, to_minute) | None, "at": minute | None}. Anything not said stays None."""
     t = " ".join(re.findall(r"[a-z0-9:.']+", (text or "").lower())).replace(". ", " ")  # keep the colon: 9:30 is one time

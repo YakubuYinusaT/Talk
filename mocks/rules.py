@@ -146,3 +146,18 @@ def guide_answer(system: str) -> str:
     """The answer from a patient guide: say the first guide entry as it is."""
     m = re.search(r"^GUIDE ENTRY 1:\s*(.*)$", system, re.M)
     return m.group(1).strip() if m else "I could not find that."
+
+
+def meaning(user: str) -> dict:
+    """What a caller meant by an answer, read by a few rules: the first free time, a yes, a no, or an area of Lagos. Anything else is unclear."""
+    from sofa.health import gazetteer
+    from sofa.health.when import answer_of, wants_earliest
+
+    said = transcript_of(user)
+    if wants_earliest(said):
+        return {"meaning": "earliest", "when": None, "area": None}
+    area = gazetteer.match_area(said)
+    if area:
+        return {"meaning": "gave_it", "when": None, "area": area.name}
+    plain = answer_of(said)
+    return {"meaning": plain or "unclear", "when": None, "area": None}

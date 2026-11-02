@@ -49,6 +49,9 @@ class HospitalStore:
                 code TEXT PRIMARY KEY, caller_ref TEXT NOT NULL, kind TEXT NOT NULL, urgent INTEGER NOT NULL DEFAULT 0, summary TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'open', reply TEXT NOT NULL DEFAULT '', created TEXT NOT NULL, replied TEXT);
             CREATE INDEX IF NOT EXISTS requests_status ON requests (status, urgent, created);
+            CREATE TABLE IF NOT EXISTS emergency_holds (
+                code TEXT PRIMARY KEY, facility_id TEXT NOT NULL, caller_ref TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'held', created TEXT NOT NULL,
+                expires TEXT NOT NULL);
         """)
         self.by_id = {f.id: f for f in self.facilities}
 
@@ -178,6 +181,33 @@ class HospitalStore:
         self.db.execute("INSERT INTO requests (code, caller_ref, kind, urgent, summary, created) VALUES (?, ?, ?, ?, ?, ?)",
                         (code, caller_ref, kind, 1 if urgent or kind == "emergency" else 0, summary[:300], self.clock().isoformat()))
         return {"code": code, "kind": kind, "urgent": bool(urgent or kind == "emergency"), "status": "open"}
+
+    HOLD_MINUTES = 60   # a place held for an emergency caller is given back by itself after this long
+
+    def holds(self, facility_id: str | None = None) -> list[sqlite3.Row]:
+        """The emergency places held now, the newest first. A hold whose time has passed no longer counts."""
+        now = self.clock().isoformat()
+        if facility_id:
+            return self.db.execute("SELECT * FROM emergency_holds WHERE status = 'held' AND expires > ? AND facility_id = ? ORDER BY created DESC", (now, facility_id)).fetchall()
+        return self.db.execute("SELECT * FROM emergency_holds WHERE status = 'held' AND expires > ? ORDER BY created DESC", (now,)).fetchall()
+
+    def places_free(self, f: data.Facility) -> int:
+        return max(0, f.emergency_places - len(self.holds(f.id)))
+
+    def hold(self, f: data.Facility, caller_ref: str) -> dict | None:
+        """Keeps one emergency place for a caller. Asking again for the same caller and place gives the same hold, so a repeated request never takes two
+        places. None when every place is taken."""
+        mine = next((h for h in self.holds(f.id) if h["caller_ref"] == caller_ref), None)
+        if mine:
+            return {"code": mine["code"], "expires": mine["expires"], "again": True}
+        if self.places_free(f) <= 0:
+            return None
+        now = self.clock()
+        code = "EMG-" + "".join(secrets.choice(CODE_ALPHABET) for _ in range(4))
+        expires = (now + timedelta(minutes=self.HOLD_MINUTES)).isoformat()
+        self.db.execute("INSERT INTO emergency_holds (code, facility_id, caller_ref, created, expires) VALUES (?, ?, ?, ?, ?)",
+                        (code, f.id, caller_ref, now.isoformat(), expires))
+        return {"code": code, "expires": expires, "again": False}
 
     def requests(self, limit: int = 60) -> list[sqlite3.Row]:
         """Open requests first, urgent before the rest and the oldest first, then the ones answered recently."""

@@ -44,7 +44,9 @@ Talk manages follow-up. It sends a reminder the day before a visit, a text when 
 
 Talk routes requests to the right people. A booking goes to the provider the caller chose, and a question the guide cannot answer goes to that facility's staff, who see it in the request inbox on their own front desk.
 
-Talk escalates what needs a person. Emergency words give the caller the emergency number, 112, straight away, and the nearest emergency care is told on its front desk, marked urgent, that someone described an emergency. Talk does not dispatch an ambulance, and it does not replace a clinician. Clinical decisions stay with qualified people.
+Talk escalates what needs a person. On every turn, Muse Spark reads whether anyone may be in danger, by meaning and in the caller's own words, and a fast keyword reading beneath it can only raise that, never lower it. A caller in danger hears the emergency number, 112, first. Talk asks where they are, names the nearest hospital that has a free emergency place by travel time, tells that hospital's front desk, and asks whether the caller reached 112. When they could not, Talk asks the hospital to keep an emergency place for them and texts the address and a reference, because each connected hospital sets aside emergency places for exactly this. Talk does not dispatch an ambulance, and it does not replace a clinician. Clinical decisions stay with qualified people.
+
+Talk also asks where a caller is before it says how long anything will take. The trip to each place is worked out from the caller's area with the usual Lagos traffic at that hour, said as a range, and a visit the caller could not reach in time is never offered. When Talk books a visit, it says when to leave.
 
 Talk speaks English today, because Meta's speech model does not yet hear Yoruba, Hausa, Igbo or Pidgin. Serving callers in those languages is the next step as soon as a model can hear them. The same design can also carry government services, public information and emergency coordination, once each of those institutions is connected the way a provider is today.
 
@@ -72,7 +74,7 @@ A hospital made in the wizard is a real provider system, not a picture of one. I
 There are also other ways to try Talk. The home page at `/overview` offers them.
 
 - You can call the number and speak to Talk, as a patient would.
-- You can open the Try it page at `/try` and type a sentence. The page shows, step by step, what Talk heard, what Muse Spark decided, which providers it asked, how long each answer took, and what it booked or filed. A booking made there appears on the provider's own front desk. The page has ready conversations, including the one above.
+- You can open the Try it page at `/try` and call Talk from your browser, or type to it. A call from the browser goes through the same speech recognition, front desk and voice as a phone call. The page shows, step by step, what Talk heard, what Muse Spark decided, which providers it asked, how long each answer took, and what it booked or filed. A booking made there appears on the provider's own front desk. The page has ready conversations, including the one above.
 - You can open the Providers page at `/overview/providers`, or go straight to the front desk of any of the four providers at `/synthetic/state-phc/`, `/synthetic/eko-care/`, `/synthetic/everwell/` and `/synthetic/onc-centre/`.
 - You can read how a call is handled on the How it works page at `/overview/technology`.
 - The Live calls page at `/demo` lists recent calls with the same step-by-step trace. It is switched off unless `DEMO_PAGE_ENABLED=true` is set, because it is public, and it hides what callers said unless `DEMO_SHOW_CALLS=true` is also set.

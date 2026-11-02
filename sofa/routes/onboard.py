@@ -71,7 +71,7 @@ def typed_of(form) -> dict:
 
 def values_of(profile: dict, typed: dict) -> dict:
     """What a form shows: what the visitor typed when a field was refused, otherwise what is kept."""
-    shown = {k: profile.get(k) for k in ("name", "address", "area", "owner", "kind", "fee", "wait", "services", "capacity")}
+    shown = {k: profile.get(k) for k in ("name", "address", "area", "owner", "kind", "fee", "wait", "services", "capacity", "emergency_places")}
     shown["hours"] = profile.get("hours_preset")
     shown.update({k: v for k, v in typed.items() if v is not None})
     return shown

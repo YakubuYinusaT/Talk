@@ -377,6 +377,20 @@ details > summary:hover { color: var(--accent-text); }
 .msg details > div { padding: var(--space-3) var(--space-4); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 .send { display: flex; flex-wrap: nowrap; gap: var(--space-3); align-items: flex-end; margin-top: var(--space-3); }
 .send .field { flex: 1 1 0; }
+/* Try it: a call or a chat. The call is one large button to start, then one microphone button that shows whether Talk is listening. */
+.mode-tabs { display: inline-flex; gap: var(--space-1); padding: var(--space-1); margin: 0 0 var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface-2); }
+.mode-tabs [role="tab"] { min-width: 96px; min-height: 40px; padding: 0 var(--space-4); border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--text-2); font-weight: 600; box-shadow: none; }
+.mode-tabs [role="tab"][aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-1); }
+.call-panel { display: grid; justify-items: center; gap: var(--space-3); padding: var(--space-5) var(--space-4); margin: 0 0 var(--space-4); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); text-align: center; }
+.call-start, .mic { display: grid; place-items: center; width: 112px; height: 112px; padding: 0; border: 0; border-radius: 50%; font-weight: 700; font-size: var(--fs-md); }
+.call-start { background: var(--success); color: #fff; }
+.mic { background: var(--accent); color: var(--on-accent); transition: transform .2s ease, box-shadow .2s ease; }
+.mic.on { box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 25%, transparent); }
+@media (prefers-reduced-motion: no-preference) { .mic.on { animation: mic-pulse 1.6s ease-in-out infinite; } }
+@keyframes mic-pulse { 50% { box-shadow: 0 0 0 14px color-mix(in srgb, var(--accent) 12%, transparent); } }
+.call-live { display: grid; justify-items: center; gap: var(--space-3); }
+.call-live[hidden], .call-start[hidden] { display: none; }
+.call-phone { margin: 0; font-size: var(--fs-sm); color: var(--text-3); max-width: none; }
 .status { min-height: var(--lh-md); margin: var(--space-2) 0 0; max-width: none; font-size: var(--fs-sm); color: var(--text-3); }
 .status.err { color: var(--danger); font-weight: 600; }
 .scripts-block { margin: 0 0 var(--space-4); }
