@@ -86,6 +86,7 @@ class Settings(BaseSettings):
     try_max_turns: int = 20          # a visitor's typed conversation ends after this many turns
     try_turns_per_hour: int = 60     # turns one visitor address may send in an hour
     try_session_minutes: int = 30    # a typed conversation is forgotten after this long
+    caller_memory_days: int = 90     # Sofa remembers a caller's area and last clinic for this long after their last call; 0 = remembers nothing between calls
 
     # The hospital onboarding wizard (/onboard): a visitor makes a simulated hospital of their own, connects it to Talk and receives its first appointment. Each hospital is
     # seen only by the visitor who made it, is removed after DEMO_ONBOARDING_HOURS, and holds made-up data only. Off: the pages answer 404.

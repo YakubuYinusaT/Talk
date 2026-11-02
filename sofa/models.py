@@ -37,6 +37,13 @@ class Caller(Row, Base):
     consent_recorded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # when the caller was told that calls are recorded
 
 
+class CallerMemory(Row, Base):
+    """What Sofa remembers about a person from one call to the next (sofa/services/caller_memory.py). The key is one-way: no phone number is stored here."""
+    __tablename__ = "caller_memory"
+    key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    data: Mapped[str] = mapped_column(Text, default="{}")
+
+
 # ---- calls -------------------------------------------------------------------------------
 
 

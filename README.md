@@ -92,6 +92,14 @@ A hospital with an emergency department shows its emergency places first, with h
 
 A front desk is read only until it is opened with the desk key, either as `?key=<the key>` in the address or in the key box on the page. The key of the four simulated providers is the value of `HOSPITAL_DESK_KEY`, and the key of a hospital made in the wizard is the one shown at step 3, which also opens it for the visitor who made it. With the key, the staff can confirm a booked visit, mark a visit attended or not attended, and reply to a request. The page refreshes itself every ten seconds while its Auto refresh box is ticked.
 
+Each front desk also has a Messages section. It lists every text Talk sent about that place's visits, requests and emergency places, with the words that were sent and the last four digits of the number. A text shows one tick when the text message service accepted it and two ticks when the phone received it, from the service's own delivery reports.
+
+## Sofa remembers the call, and the caller
+
+Within a call, Sofa keeps what the caller has said and what it has offered, whatever question was open. A caller can give their area late, say "book it" after Sofa has read out the times, or ask about a pharmacy after booking a visit, and Sofa carries on from what it already knows instead of asking again.
+
+From one call to the next, Sofa recognises a phone caller by the number they call from, and a visitor of the Try it page by a random identifier in a cookie in their browser. A returning caller is welcomed back, is not asked again where they are, and is offered the clinic of their last booking when they ask to book without naming one. Only the area and that clinic are kept, never why the caller needed care. Neither the number nor the browser identifier is stored: each is turned into a one-way key with a secret only the server holds. What is kept is forgotten after 90 days without a call, which can be changed with `CALLER_MEMORY_DAYS` (0 turns it off).
+
 ## How it works
 
 ```

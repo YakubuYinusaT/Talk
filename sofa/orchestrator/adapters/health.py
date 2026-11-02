@@ -379,6 +379,14 @@ class HealthAdapter(ServiceAdapter):
             mem["tool"] = tool_id
         mem.update({k: v for k, v in offered.items() if k in ("options", "place", "slot") and v})
         gw.st["call_so_far"] = self.call_so_far(mem)
+        self.keep(gw, origin=facts.get("origin"), area=facts.get("area"))
+
+    @staticmethod
+    def keep(gw, **facts) -> None:
+        """Remember for this person's next call: where they are, and the clinic where they were last booked. Never why they needed care."""
+        from ...services import caller_memory
+
+        caller_memory.keep(gw.db, gw.st.get("memory_key"), gw.svc.settings.caller_memory_days, **facts)
 
     def remember_where(self, gw, transcript: str) -> None:
         """Where the caller said they are, whatever question they were answering ("No, nobody is in danger. I dey Ikorodu.")."""
@@ -387,6 +395,7 @@ class HealthAdapter(ServiceAdapter):
             facts = self.memory(gw).setdefault("req", {})
             facts["origin"] = here.name
             facts.setdefault("area", here.name)
+            self.keep(gw, origin=here.name, area=facts["area"])
 
     def recall(self, gw, tool_id: str, req: Request) -> None:
         """Fill what this request does not say from what the caller said earlier in the call. What the caller says now always wins."""
@@ -406,7 +415,7 @@ class HealthAdapter(ServiceAdapter):
         req.earliest = req.earliest or bool(facts.get("earliest"))
         if tool_id in self.FOLLOWS_A_PLACE and not (req.facility or req.area):   # "Yes, please book it": the place Sofa was talking about
             place = mem.get("place")
-            req.facility = place["n"] if place else facts.get("facility")
+            req.facility = place["n"] if place else facts.get("facility") or (mem.get("known_place") if tool_id == "health.book_appointment" else None)
             req.area = facts.get("area")
         req.area = req.area or facts.get("area")
         if tool_id == "health.book_appointment":
@@ -781,6 +790,7 @@ class HealthAdapter(ServiceAdapter):
         text = self.words(gw, "health_sms_booked", place=sms_name, day=f"{start.strftime('%A')} {start.day} {start.strftime('%B')}", time=say_time(start), code=code)
         self.remember_visit(gw, place, appt)
         self.forget_offer(gw)
+        self.keep(gw, place=place["n"])
         spec = self.spec_of(place)
         self.note(gw, "booked", provider=spec.label if spec else place["d"], place=place["n"], code=code, when=f"{say_day(start.date(), now.date())} at {say_time(start)}")
         if await self.text_caller(gw, text):
@@ -906,6 +916,12 @@ class HealthAdapter(ServiceAdapter):
                 return gw.reply("declined", action="health_offer_declined")
             options = pending["options"]
             req.tries = 0    # the tries used up asking for the area do not count against the questions that follow
+            here = gazetteer.caller_location(transcript)
+            if here and answer != "yes":   # "I am in Surulere" says where the caller is, not which place: the same places again, with the trip from there
+                req.origin = here.name
+                self.add_trips(gw, options, req.origin)
+                return self.ask(gw, "choose", "health.book_appointment", req, self.options_question(gw, options, None, lead=self.words(gw, "health_options_from", area=here.name)),
+                                options=options)
             chosen = self.pick_by_words(transcript, options)    # "Yes, please book the private clinic" answers the offer and the choice together
             if answer != "yes" and chosen is None:
                 return None

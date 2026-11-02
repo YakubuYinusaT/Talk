@@ -22,6 +22,10 @@ PHRASES: dict[str, list[str]] = {
         "{greeting}, you have reached Talk. I am Sofa. What would you like help with today?",
         "Hello, this is Sofa at Talk. How may I help you today?",
     ],
+    "greet_caller_known": [
+        "{greeting}, and welcome back to Talk. It is Sofa. How may I help you today?",
+        "{greeting}! Welcome back. This is Sofa at Talk. How can I help you today?",
+    ],
     "greet_caller_returning": [
         "{greeting}, {name}. It is Sofa. How may I help you today?",
         "{greeting}, {name}! This is Sofa at Talk. What would you like help with today?",
@@ -66,6 +70,7 @@ CONTEXT: dict[str, str] = {
     "daypart_afternoon": "Greeting word used from midday to 5 pm.",
     "daypart_evening": "Greeting word used after 5 pm.",
     "greet_caller": "First words when someone calls Talk, before we know what they need. Like a friendly front desk: greet, say you are Sofa, and ask how you can help. Give several different ways to say it; one is picked at random each call.",
+    "greet_caller_known": "First words to a caller who has called Talk before, whose name Sofa does not know. Welcomes them back without saying anything about them.",
     "greet_caller_returning": "First words to a caller Sofa already knows by name. Same friendly tone; several variations are picked at random.",
     "call_ask_again": "Sofa did not understand what the caller needs. Asks again politely and lists a few examples: a clinic, a medicine, a question for a care team. Never blame the caller.",
     "guide_answer": "Answers the caller's question from a facility's patient guide. {answer} is the answer, already written from the guide. Then asks if there is anything else Sofa can help with.",

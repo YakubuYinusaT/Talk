@@ -27,6 +27,7 @@ from ..dialogue.templates import LANG, render
 from ..orchestrator.manager import CallManager
 from ..health import scope
 from ..models import Call, CallTurn, Caller, Notification
+from ..services import caller_memory
 from ..textutil import e164
 
 log = logging.getLogger("sofa.voice")
@@ -111,7 +112,13 @@ async def _open_call(svc, session_id: str, caller: str, dest: str, *, typed: boo
         db.flush()
         st = new_state()
         st.update(call_id=str(call.id), domain=None, typed=typed, phone=caller, visitor=visitor)   # who is asking decides which providers may be told about (sofa/health/scope.py)
-        key = "greet_caller_returning" if person.name else "greet_caller"
+        # the same person as last time: a typed or browser call is recognised by its browser, a phone call by its number
+        s = svc.settings
+        st["memory_key"] = (caller_memory.key_for("visitor", visitor, s.at_callback_secret) if visitor else None) if typed else caller_memory.key_for("phone", caller, s.at_callback_secret)
+        known = caller_memory.load(db, st["memory_key"], s.caller_memory_days)
+        if known:
+            st["health_memory"] = {"req": {k: known[k] for k in ("origin", "area") if known.get(k)}, **({"known_place": known["place"]} if known.get("place") else {})}
+        key = "greet_caller_returning" if person.name else "greet_caller_known" if known else "greet_caller"
         greeting = render(f"daypart_{daypart()}", {})
         # a random phrasing each call, so the front desk never sounds scripted
         text = render(key, {"name": person.name or "", "greeting": greeting}, random.randrange(1000))

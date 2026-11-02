@@ -136,10 +136,13 @@ async def start(request: Request, _=Depends(enabled)):
     if len(st["sessions"]) >= MAX_SESSIONS:
         return refuse(503, "Talk is busy. Please try again shortly.")
     session = secrets.token_urlsafe(16)
-    visitor = None
     onboarding = getattr(svc, "onboarding", None)
-    if onboarding:   # a visitor who made a hospital in the onboarding wizard also sees it here, and nobody else does (sofa/onboarding)
-        visitor = onboarding.visitor_of(request)
+    # The browser is recognised from one conversation to the next by a random identifier in a signed cookie, the same one the onboarding wizard uses, so that
+    # Sofa remembers this visitor as it remembers a caller by their number. A visitor who made a hospital in the wizard also sees it here, and nobody else does.
+    visitor, cookie = who.read(request.cookies, s.at_callback_secret), None
+    if not visitor and s.caller_memory_days > 0:
+        visitor, cookie = who.issue(s.at_callback_secret)
+    if onboarding and visitor:
         with svc.session_factory() as db:
             if onboarding.hospital_of(db, visitor):
                 session = f"onb-{who.tag(visitor)}-{session}"     # so that the Live calls page and the wizard's summary can recognise these conversations
@@ -158,7 +161,11 @@ async def start(request: Request, _=Depends(enabled)):
             log.exception("the greeting could not be voiced")
             out["audio"] = []
         out["voice"] = getattr(svc.tts, "tag", "")
-    return out
+    if not cookie:
+        return out
+    response = JSONResponse(out)
+    response.set_cookie(who.COOKIE, cookie, max_age=s.caller_memory_days * 86400, httponly=True, samesite="lax", secure=str(s.public_base_url).startswith("https://"), path="/")
+    return response
 
 
 def path_of(url: str) -> str:

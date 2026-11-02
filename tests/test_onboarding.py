@@ -478,7 +478,9 @@ def test_a_hospital_survives_a_restart_with_its_appointment_book(web, happ, onb)
     again = TestClient(happ)
     again.cookies.set("talk_demo", visitor_cookie)
     assert again.get("/onboard/api/journey").json()["appointments"][0]["code"] == code
-    assert "Olive Branch Community General Hospital" in chat(again, ["Please help me find a clinic near me for antenatal care.", "I am in Surulere."])[1]
+    replies = chat(again, ["Please help me find a clinic near me for antenatal care.", "I am in Surulere."])
+    assert "Olive Branch Community General Hospital" in replies[0]     # the same browser: Sofa remembers that this visitor is in Surulere
+    assert "Olive Branch Community General Hospital" in replies[1] and "Which day and time" not in replies[1]
 
 
 def test_the_wizard_answers_404_when_it_is_switched_off(tmp_path):
