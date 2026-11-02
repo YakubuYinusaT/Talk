@@ -10,6 +10,7 @@ danger now: Talk gives the emergency number and starts the emergency help at onc
 """
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
@@ -24,7 +25,7 @@ FUZZY = 0.80
 
 BREATH = ("breath*", "breathing", "breathe")
 WAKE = ("wake", "waking", "respond*", "responsive", "moving", "move", "breathing")
-PERSON = ("he", "she", "mother", "father", "baby", "child", "brother", "sister", "husband", "wife", "neighbour", "man", "woman", "boy", "girl")
+PERSON = ("he", "she", "mother", "father", "baby", "child", "pikin", "brother", "sister", "husband", "wife", "neighbour", "man", "woman", "boy", "girl")
 
 # (level, name, kind, slots, window). Every slot must be found within `window` words of the first. A pattern of the kind "absent" is itself a negation
 # ("not breathing"), so its first slot must come first and it is never cancelled; a pattern of the kind "present" is cancelled by a negator just before
@@ -39,6 +40,7 @@ PATTERNS = [
     (POSSIBLE, "passed out", "present", [("passed", "passing"), ("out",)], 2),
     (EMERGENCY, "seizure", "present", [("seizure*", "seizing", "convuls*", "foaming", "epileptic")], 1),
     (EMERGENCY, "shaking the body", "present", [("shake", "shaking", "shaken"), ("body",)], 3),
+    (POSSIBLE, "shaking in pidgin", "present", [("dey",), ("shake", "shaking", "shaky")], 1),     # "my pikin dey shake"
     (POSSIBLE, "shaking badly", "present", [("shaking", "shivering"), ("badly", "fever", "uncontrollably")], 4),
     (EMERGENCY, "choking", "present", [("choking", "choke*", "chok*")], 1),
     (EMERGENCY, "poison", "present", [("poison*", "overdose", "overdosed")], 1),
@@ -76,6 +78,34 @@ PATTERNS = [
 ]
 
 
+# Emergencies said in Pidgin or in Yoruba, folded to plain letters, matched as whole words in this order. A native speaker reviews this list the way they review
+# the call scripts. Talk's speech model hears English only, so the Yoruba phrases matter most for a typed conversation and for Yoruba words inside an English sentence.
+PHRASES = [
+    (EMERGENCY, "bleeding badly (pidgin)", ("bleed", "well", "well")),    # e dey bleed well well
+    (EMERGENCY, "bleeding badly (pidgin)", ("bleeding", "well", "well")),
+    (EMERGENCY, "cannot breathe (yoruba)", ("mi", "o", "le", "mi")),      # mi ò lè mí: I cannot breathe
+    (EMERGENCY, "cannot breathe (yoruba)", ("ko", "le", "mi")),           # kò lè mí: he or she cannot breathe
+    (EMERGENCY, "fits (yoruba)", ("giri",)),                             # gìrì: a fit
+    (EMERGENCY, "bleeding (yoruba)", ("eje", "n", "san")),                # ẹ̀jẹ̀ ń sàn: blood is flowing
+    (EMERGENCY, "bleeding (yoruba)", ("eje", "n", "jade")),               # ẹ̀jẹ̀ ń jáde: blood is coming out
+    (EMERGENCY, "chest pain (yoruba)", ("aya", "n", "dun")),              # àyà ń dùn: the chest hurts
+    (POSSIBLE, "fainted (yoruba)", ("daku",)),                           # dákú: fainted
+    (POSSIBLE, "fell (yoruba)", ("subu",)),                              # ṣubú: fell
+]
+_SUBDOTTED = str.maketrans({"\u1eb9": "e", "\u1ecd": "o", "\u1e63": "s"})     # ẹ, ọ and ṣ
+
+
+def fold(text: str) -> str:
+    """Lower case in plain letters: Yoruba's ẹ, ọ and ṣ and the accents above the vowels become a to z, so "ẹ̀jẹ̀ ń sàn" and "eje n san" are one sentence."""
+    text = unicodedata.normalize("NFC", (text or "").lower()).translate(_SUBDOTTED)
+    return "".join(c for c in unicodedata.normalize("NFD", text) if not unicodedata.combining(c))
+
+
+def _has_phrase(tokens: list[str], phrase: tuple[str, ...]) -> bool:
+    n = len(phrase)
+    return any(tuple(tokens[i:i + n]) == phrase for i in range(len(tokens) - n + 1))
+
+
 @dataclass(frozen=True)
 class Signal:
     level: str = NONE
@@ -85,7 +115,7 @@ class Signal:
 
 def normal(text: str) -> list[str]:
     """Lower case, apostrophes removed (can't becomes cant), everything except letters and digits dropped."""
-    return re.findall(r"[a-z0-9]+", (text or "").lower().replace("'", "").replace("’", ""))
+    return re.findall(r"[a-z0-9]+", fold(text).replace("'", "").replace("’", ""))
 
 
 def is_form(token: str, form: str) -> bool:
@@ -156,6 +186,11 @@ def read(text: str) -> Signal:
         hits.append(name)
         if RANK[lvl] > RANK[level]:
             level = lvl
+    for lvl, name, phrase in PHRASES:
+        if _has_phrase(tokens, phrase):
+            hits.append(name)
+            if RANK[lvl] > RANK[level]:
+                level = lvl
     return Signal(level, "floor" if level != NONE else "none", tuple(hits))
 
 

@@ -50,3 +50,24 @@ def test_the_model_can_raise_the_level_but_never_lower_it():
 def test_the_floor_names_the_patterns_it_matched_and_never_keeps_the_words():
     signal = floor.read("Please help, my brother is not breathing.")
     assert signal.level == E and "not breathing" in signal.hits and "brother" not in " ".join(signal.hits)
+
+
+@pytest.mark.parametrize("said", ["Him no dey breathe, abeg help.", "She no fit breathe.", "Chest dey pain me well well.", "He collapse for road.",
+                                  "E dey bleed well well."])
+def test_an_emergency_said_in_pidgin_is_caught(said):
+    assert floor.read(said).level == E
+
+
+def test_a_child_shaking_in_pidgin_raises_the_question():
+    assert floor.read("My pikin dey shake.").level == P
+
+
+@pytest.mark.parametrize("said", ["Mi o le mi.", "Mi \u00f2 l\u00e8 m\u00ed.", "\u1eb8\u0300j\u1eb9\u0300 \u0144 s\u00e0n.", "Eje n san lati ori re.",
+                                  "O n giri.", "Ko le mi, e jowo."])
+def test_an_emergency_said_in_yoruba_is_caught_with_or_without_its_accents(said):
+    assert floor.read(said).level == E
+
+
+@pytest.mark.parametrize("said", ["Please find a clinic near Agiri street.", "My sister lives in Ikeja.", "Eje ki n beere nipa ile iwosan."])
+def test_yoruba_words_are_matched_whole_so_a_name_that_contains_one_stays_quiet(said):
+    assert floor.read(said).level == N

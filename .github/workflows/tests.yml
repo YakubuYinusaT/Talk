@@ -11,13 +11,18 @@ concurrency:
 
 jobs:
   tests:
+    name: tests (python ${{ matrix.python }})
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]     # every version the project says it supports
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: ${{ matrix.python }}
           cache: pip
       - name: Install Talk and the test runner
         run: pip install -e ".[dev]"
