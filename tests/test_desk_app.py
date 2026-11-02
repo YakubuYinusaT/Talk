@@ -45,3 +45,30 @@ def test_a_quiet_desk_says_so_in_a_few_words(client):
 def test_the_activity_never_shows_a_phone_number(client):
     call(client, BOOK)
     assert not re.search(r"\+?234\d{6,}", section(desk(client), "activity"))
+
+
+def test_the_texts_talk_sent_are_listed_with_a_tick_for_each_step_of_delivery(client, happ):
+    from sqlalchemy import select
+
+    from sofa.models import Notification
+
+    call(client, BOOK)
+    with happ.state.svc.session_factory() as db:
+        notes = db.scalars(select(Notification).where(Notification.template == "health_notice")).all()
+        assert notes, "the booking call texts the details"
+        code = re.search(r"APT-[A-Z0-9]{4}", notes[0].body).group(0)
+    messages = section(desk(client), "messages")
+    assert "Details sent" in messages and code in messages and "Test" in messages     # a test caller's text is recorded, never sent
+    assert not re.search(r"\+?234\d{6,}", messages)
+    assert re.search(r'data-panel="messages">.*?<span class="count">\d+</span>', desk(client), re.S)
+
+    with happ.state.svc.session_factory() as db:
+        for note in db.scalars(select(Notification).where(Notification.template == "health_notice")):
+            note.status = "delivered"
+        db.commit()
+    messages = section(desk(client), "messages")
+    assert "✓✓" in messages and "Delivered" in messages
+
+
+def test_a_desk_with_no_texts_says_so(client):
+    assert "No messages yet" in section(desk(client, "everwell"), "messages")

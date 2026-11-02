@@ -26,7 +26,7 @@
 {% if bookable %}{% set sections = sections + [("appointments", "Appointments", "calendar", today_total or none, false)] %}{% endif %}
 {% if stock %}{% set sections = sections + [("stock", "Medicine stock", "pill", none, false)] %}{% endif %}
 {% if guide %}{% set sections = sections + [("guide", "Patient guide", "book", none, false)] %}{% endif %}
-{% set sections = sections + [("activity", "Activity", "pulse", none, false), ("places", "Places", "pin", places|length, false)] %}
+{% set sections = sections + [("messages", "Messages", "chat", messages|length or none, false), ("activity", "Activity", "pulse", none, false), ("places", "Places", "pin", places|length, false)] %}
 
 {% macro menu() -%}
 <nav class="app-nav" id="desk-nav" aria-label="Front desk">
@@ -284,6 +284,25 @@
         <p class="source">Source: {{ guide.source }}</p>
       </section>
       {% endif %}
+
+      {# ---- the texts Talk sent about this provider, with a tick when the provider took one and two when the phone received it ---- #}
+      <section class="panel card" id="messages" data-panel aria-labelledby="messages-title">
+        <div class="card-head">
+          <h2 class="card-title" id="messages-title">Messages</h2>
+          <p class="count">{{ messages|length }}</p>
+        </div>
+        {% if messages %}
+        <ol class="log texts">
+          {% for m in messages %}
+          <li class="tone-{{ m.tone }}">
+            <span class="log-icon">{{ icon("chat") }}</span>
+            <div><p class="log-cue"><b>{{ m.label }}</b> <code>{{ m.code }}</code> <span class="muted">to ··{{ m.to }}</span></p><p class="text-body">{{ m.body }}</p></div>
+            <span class="when"><time>{{ m.time }}</time> <span class="ticks tone-{{ m.tone }}" title="{{ m.state }}">{% if m.ticks %}<b aria-hidden="true">{{ m.ticks }}</b> {% endif %}{{ m.state }}</span></span>
+          </li>
+          {% endfor %}
+        </ol>
+        {% else %}{{ empty("No messages yet") }}{% endif %}
+      </section>
 
       {# ---- what Talk did at this provider, newest first ---- #}
       <section class="panel card" id="activity" data-panel aria-labelledby="activity-title">

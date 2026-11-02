@@ -16,14 +16,16 @@ KINDS = {"state-phc": "clinics", "eko-care": "clinics", "everwell": "pharmacies"
 DOMAIN_OF = {slug: "health_" + slug.replace("-", "_") for slug in data.NETWORKS}
 
 
-def create_apps(settings) -> dict:
-    """One web app per provider system, each with its own database file and its own secret, to be mounted at /synthetic/<slug>."""
+def create_apps(settings, texts=None) -> dict:
+    """One web app per provider system, each with its own database file and its own secret, to be mounted at /synthetic/<slug>. `texts` lets each front desk
+    show the texts Talk sent about it (sofa/services/notify.py)."""
     folder = Path(settings.hospital_db_dir or settings.storage_dir)
     apps = {}
     for slug, network in data.NETWORKS.items():
         path = ":memory:" if str(folder) == ":memory:" else str(folder / f"provider_{slug}.db")
         if path != ":memory:":
             folder.mkdir(parents=True, exist_ok=True)
-        apps[slug] = provider.create_provider_app(network, settings.provider_secret(slug), HospitalStore(path, facilities=network.facilities), settings.hospital_desk_key)
+        apps[slug] = provider.create_provider_app(network, settings.provider_secret(slug), HospitalStore(path, facilities=network.facilities), settings.hospital_desk_key,
+                                                   texts=texts)
     return apps
 

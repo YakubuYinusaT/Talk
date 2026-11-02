@@ -202,3 +202,11 @@ body.desk.embedded .main { padding-block: 0; }
   .app-top { position: static; padding: var(--space-3) var(--space-4); }
   #desk-live { padding: var(--space-4); }
 }
+
+/* Messages: the words Talk sent, and a tick when the provider took the text, two when the phone received it */
+.texts .text-body { margin: var(--space-1) 0 0; max-width: 60ch; font-size: var(--fs-sm); color: var(--text-2); overflow-wrap: anywhere; }
+.texts .when { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.ticks { font-size: var(--fs-xs); color: var(--text-3); white-space: nowrap; }
+.ticks b { letter-spacing: -0.2em; margin-right: 0.25em; }
+.ticks.tone-success { color: var(--accent-text); font-weight: 600; }
+.ticks.tone-danger { color: var(--danger); font-weight: 600; }

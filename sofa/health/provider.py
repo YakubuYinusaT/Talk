@@ -272,10 +272,11 @@ class Provider:
 # ---- the web service ------------------------------------------------------------------------------------------
 
 
-def create_provider_app(network: data.Network, secret: str, store: HospitalStore | None = None, desk_key: str = "", owner=None, extras=None) -> FastAPI:
+def create_provider_app(network: data.Network, secret: str, store: HospitalStore | None = None, desk_key: str = "", owner=None, extras=None, texts=None) -> FastAPI:
     """`desk_key` lets the front desk confirm and mark visits and answer requests from its page (open the page with ?key=...). Empty: the page only shows the book.
     A hospital made in the onboarding wizard also passes `owner`, a function that says whether a request comes from the visitor it was made for (its page is then shown
-    to that visitor alone, with staff access, and to anyone who brings the desk key), and `extras`, a function that gives the page what is particular to that hospital."""
+    to that visitor alone, with staff access, and to anyone who brings the desk key), and `extras`, a function that gives the page what is particular to that hospital.
+    `texts` is Talk's record of the texts it sent, asked by reference (sofa/services/notify.py), so the desk can show each one and whether it arrived."""
     store = store or HospitalStore(facilities=network.facilities)
     provider = Provider(network, store)
     app = FastAPI(title=network.name, docs_url=None, redoc_url=None, openapi_url=None)
@@ -337,7 +338,7 @@ def create_provider_app(network: data.Network, secret: str, store: HospitalStore
         if owner and not allowed:   # a hospital made for one visitor is not shown to anybody else
             raise HTTPException(status_code=404)
         page = desk_page.render(provider.network, store, desk_key, key, staff=allowed,
-                                extras={"embedded": embed == "1", **(extras(request) if extras else {})})
+                                extras={"embedded": embed == "1", **(extras(request) if extras else {})}, texts=texts)
         return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
     return app

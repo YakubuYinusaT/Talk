@@ -6,7 +6,7 @@ sofa/web/templates/desk, and all the styling and behaviour in sofa/web/static/de
 """
 
 import hmac
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -144,6 +144,26 @@ def activity_of(store: HospitalStore, now: datetime, limit: int = 30) -> list[di
     return [{**entry, "age": age_words(at, now), "time": f"{at:%H:%M}"} for at, entry in found[:limit]]
 
 
+def codes_of(store: HospitalStore) -> set[str]:
+    """Every reference this provider gave out (visits, requests and emergency places), by which Talk's texts about them are found. Sample visits are left out."""
+    codes = {r["code"] for r in store.db.execute("SELECT code, caller_ref FROM appointments").fetchall() if not r["caller_ref"].startswith("sample-")}
+    codes |= {r["code"] for r in store.db.execute("SELECT code FROM requests").fetchall()}
+    return codes | {r["code"] for r in store.db.execute("SELECT code FROM emergency_holds").fetchall()}
+
+
+def messages_of(store: HospitalStore, texts, now: datetime) -> list[dict]:
+    """The texts Talk sent to patients and staff about this provider, with what became of each one. `texts` is Talk's own record, given by the code that runs
+    the provider; a desk without it shows no messages."""
+    if not texts:
+        return []
+    found = []
+    for t in texts(codes_of(store)):
+        at = t["at"].astimezone(timezone.utc).replace(tzinfo=None) if t["at"].tzinfo else t["at"]   # Talk keeps UTC, the desk shows Lagos time
+        at += timedelta(hours=1)
+        found.append({**t, "body": ui.scrub(t["body"]), "time": f"{at:%H:%M}", "age": age_words(at, now)})
+    return found
+
+
 def stock_of(store: HospitalStore) -> dict | None:
     """What each pharmacy holds of each medicine, for a provider that has pharmacies. The numbers are made up but steady (data.stock_level)."""
     pharmacies = [f for f in store.facilities if f.kind == "pharmacy"]
@@ -157,7 +177,7 @@ def stock_of(store: HospitalStore) -> dict | None:
     return {"rows": rows, "areas": [f.area for f in pharmacies], "places": len(pharmacies), "lines_in_stock": sum(1 for r in rows if r["places_with"] > 0)}
 
 
-def build(network: data.Network, store: HospitalStore, desk_key: str, key: str, staff: bool = False, extras: dict | None = None) -> dict:
+def build(network: data.Network, store: HospitalStore, desk_key: str, key: str, staff: bool = False, extras: dict | None = None, texts=None) -> dict:
     """Everything the template needs for one view of the desk. `key` is what the visitor put in the address; only a right key gives the staff buttons, and so does
     `staff`, which says that the request comes from the visitor a hospital made in the onboarding wizard belongs to. `extras` is what is particular to such a hospital."""
     now = store.clock()
@@ -170,6 +190,7 @@ def build(network: data.Network, store: HospitalStore, desk_key: str, key: str, 
     stock = stock_of(store)
     holds, rooms = holds_of(store, now)
     activity = activity_of(store, now)
+    messages = messages_of(store, texts, now)
     upcoming = [{**v, "day": g["label"]} for g in groups for v in g["visits"] if v["status"] in ("booked", "confirmed") and not v["passed"]][:5]
     marking_due = [{**v, "day": g["label"]} for g in groups for v in g["visits"] if v["passed"]][:5]
     urgent = sum(1 for r in waiting if r["urgent"])
@@ -193,9 +214,9 @@ def build(network: data.Network, store: HospitalStore, desk_key: str, key: str, 
             "access": access, "marking": marking, "key": key if marking else "", "tiles": tiles, "places": places,
             "groups": groups, "bookable": any(p["bookable"] for p in places), "waiting": waiting, "answered": answered, "urgent": urgent, "stock": stock, "guide": guide,
             "book_places": sorted({(v["place_id"], v["place"]) for g in groups for v in g["visits"]}, key=lambda pair: pair[1]),
-            "demo": network.demo, "assistant": None, "embedded": False, "holds": holds, "rooms": rooms, "activity": activity, "upcoming": upcoming,
+            "demo": network.demo, "assistant": None, "embedded": False, "holds": holds, "rooms": rooms, "activity": activity, "messages": messages, "upcoming": upcoming,
             "marking_due": marking_due, "today_total": today_total, "app_shell": True, **(extras or {})}
 
 
-def render(network: data.Network, store: HospitalStore, desk_key: str, key: str, staff: bool = False, extras: dict | None = None) -> str:
-    return TEMPLATES.get_template("desk.html").render(**build(network, store, desk_key, key, staff, extras))
+def render(network: data.Network, store: HospitalStore, desk_key: str, key: str, staff: bool = False, extras: dict | None = None, texts=None) -> str:
+    return TEMPLATES.get_template("desk.html").render(**build(network, store, desk_key, key, staff, extras, texts))

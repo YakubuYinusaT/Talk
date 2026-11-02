@@ -29,7 +29,7 @@ from ..health.links import ProviderError, ProviderSpec, ToolSpec
 from ..health.store import HospitalStore
 from ..health.when import lagos_now, say_day, say_time
 from ..models import DemoHospital
-from ..services.notify import TEST_PREFIX
+from ..services.notify import TEST_PREFIX, texts_about
 from ..textutil import e164
 from . import hospital_profile
 from . import visitor as who
@@ -211,7 +211,8 @@ class Onboarding:
             if fresh and row.profile.get("samples"):
                 self.seed(store, network.facilities[0])
             app = provider_module.create_provider_app(network, row.secret or "", store, row.desk_key or "", owner=lambda request, slug=row.slug: self.is_owner(request, slug),
-                                                      extras=lambda request, slug=row.slug: self.desk_extras(slug))
+                                                      extras=lambda request, slug=row.slug: self.desk_extras(slug),
+                                                      texts=lambda codes: texts_about(self.svc.session_factory, codes))
             mount = Mount(f"/synthetic/{row.slug}", app=app)
             self.app.router.routes = [*self.app.router.routes, mount]     # a new list, so that a request being routed at this moment is not disturbed
             self.apps[row.slug], self.mounts[row.slug] = app, mount

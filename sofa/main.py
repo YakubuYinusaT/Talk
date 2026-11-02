@@ -76,7 +76,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings.synthetic_hospital:  # made-up provider systems beside Talk, each reached only through its own signed connection (see sofa/health)
         from .health import register as health_register
 
-        for slug, provider_app in health_register.create_apps(settings).items():
+        from .services.notify import texts_about
+
+        for slug, provider_app in health_register.create_apps(settings, texts=lambda codes: texts_about(svc.session_factory, codes)).items():
             app.mount(f"/synthetic/{slug}", provider_app)
 
     health_adapter = svc.orchestrator.adapter("health")
