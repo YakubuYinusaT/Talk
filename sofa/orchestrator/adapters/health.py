@@ -145,6 +145,9 @@ class HealthAdapter(ServiceAdapter):
     def __init__(self):
         self.providers: list = []     # the provider systems behind the front desk, set at start-up
         self.demo = None              # the hospitals visitors made in the onboarding wizard (sofa/onboarding), each shown only to the visitor who made it
+        from .health_agent import HealthAgent
+
+        self.agent = HealthAgent(self)  # the model reads the whole call and decides each step; this desk takes it
 
     def set_providers(self, specs: list) -> bool:
         changed = list(specs) != self.providers
@@ -635,6 +638,12 @@ class HealthAdapter(ServiceAdapter):
     # ---- which place ---------------------------------------------------------------------------------
 
     @staticmethod
+    def in_area_first(found: list[dict], area: str | None) -> list[dict]:
+        """A place named by its kind in an area ("the general hospital", from Ikorodu) is the one in that area, when there is one."""
+        same = [f for f in found if area and f.get("area") == area]
+        return same or found
+
+    @staticmethod
     def names_a_place(text: str | None, area: str) -> bool:
         """'Surulere' names an area; 'Aguda' or 'Surulere Care' names a place."""
         left = [t for t in tokens(text or "") if t not in tokens(area) and t not in PLACE_WORDS and t not in POLITE_WORDS]
@@ -654,6 +663,7 @@ class HealthAdapter(ServiceAdapter):
             req.tries = max(req.tries, 1)   # an answer to the question was already counted when it came in: one miss is one try, not two
             return None, self.ask_where(gw, tool_id, req)
         req.tries = 0    # the question about the place is settled: the tries that were used up asking for it must not count against the next question
+        found = self.in_area_first(found, req.area if query else None)
         options = self.compact(found[:MAX_OPTIONS])
         if len(options) == 1:
             return options[0], None
@@ -714,6 +724,7 @@ class HealthAdapter(ServiceAdapter):
             req.tries = max(req.tries, 1)   # an answer to the question was already counted when it came in: one miss is one try, not two
             return self.ask_where(gw, "health.book_appointment", req)
         req.tries = 0    # asking for the area is over: its tries must not count against the question that asks which clinic, or the one that asks when
+        found = self.in_area_first(found, req.area if query else None)
         options = self.compact(found[:MAX_OPTIONS])
         if len(options) == 1:
             return await self.book_at(gw, req, options[0])
@@ -861,7 +872,8 @@ class HealthAdapter(ServiceAdapter):
     async def drug(self, gw, req: Request) -> Outcome:
         if not req.drug:
             return self.ask_where(gw, "health.drug_availability", req)
-        args = {"drug": req.drug, **({"lat": AREAS[req.area].lat, "lon": AREAS[req.area].lon} if req.area else {})}
+        near = req.area or req.origin
+        args = {"drug": req.drug, **({"lat": AREAS[near].lat, "lon": AREAS[near].lon} if near else {})}
         answered = await self.ask_all(gw, "stock", args, "pharmacies")
         if not answered:
             return self.nothing_reachable(gw)
@@ -873,7 +885,12 @@ class HealthAdapter(ServiceAdapter):
         pharmacies = sorted((p for _, a in answered for p in a.get("pharmacies", [])), key=lambda p: (p["km"] is None, p["km"] if p["km"] is not None else 0, not p["open_now"], p["name"]))
         if not pharmacies:
             return self.say(gw, self.words(gw, "health_drug_none", drug=drug["name"]), "health_drug_none")
+        if req.origin:     # the caller said where they are: the nearest by road first, and how long the trip takes
+            self.with_travel(gw, pharmacies, req.origin)
+            pharmacies.sort(key=lambda p: (self.how_far(p), not p["open_now"], p["name"]))
         text = self.words(gw, "health_drug_found", drug=drug["name"], where=join_names([p["name"] for p in pharmacies[:2]], "and"), price=f"{drug['price']:,}")
+        if pharmacies[0].get("travel"):
+            text += " " + self.words(gw, "health_drug_trip", pharmacy=pharmacies[0]["name"], area=req.origin, away=pharmacies[0]["travel"])
         if drug["prescription"]:
             text += " " + self.words(gw, "health_drug_prescription")
         night = next((p for p in pharmacies if p.get("all_day")), None)
@@ -888,7 +905,9 @@ class HealthAdapter(ServiceAdapter):
         if not said_nothing_about_time(parse_when(transcript, self.now())):
             req.when = transcript.strip()[:120]
 
-    async def resolve_pending(self, gw, pending: dict, transcript: str) -> Outcome | None:
+    async def resolve_pending(self, gw, pending: dict, transcript: str, agreed: bool | None = None) -> Outcome | None:
+        """The caller's answer to the question Talk asked. `agreed` is the model's reading of a yes or a no when it leads the call (health_agent.py): it is
+        used instead of reading the answer again."""
         st, step, tool_id = gw.st, pending["step"], pending.get("tool")
         req = Request.unpack(pending.get("req"))
         tries = pending.get("tries", 0)
@@ -903,7 +922,9 @@ class HealthAdapter(ServiceAdapter):
             return await self.start(gw, tool, req) if tool else None
 
         answer = answer_of(transcript, cancelling=step == "cancel_confirm")
-        if step in ("offer_book", "confirm", "cancel_confirm"):
+        if agreed is not None:
+            answer = "yes" if agreed else "no"
+        elif step in ("offer_book", "confirm", "cancel_confirm"):
             plain = await gw.answer_to(transcript)  # the model's reading of a yes or a no, said in any way
             answer = {"yes": "yes", "no": "no"}.get(plain, answer)
             if answer == "yes" and hesitates(transcript):    # a caller who is thinking, waiting or asking for more has agreed to nothing, whatever the model made of it
@@ -992,6 +1013,12 @@ class HealthAdapter(ServiceAdapter):
             if yes:
                 self.note(gw, "urgency", level=floor.EMERGENCY, source="caller", hits=[])
                 return await self.emergency(gw, f"{said} {transcript}")
+            if gw.svc.settings.dialogue_agent:     # nobody is in danger: the model goes on with what the caller asked, with the whole call in view
+                decided = await self.agent.decide(gw, transcript)
+                if decided and decided.action not in ("reply", "goodbye", "other"):
+                    out = await self.agent.act(gw, decided, transcript)
+                    if out is not None:
+                        return out
             return await self.turn(gw, said, 1.0)      # nobody is in danger: the first request is answered as it was meant, with any place said since remembered
 
         if step == "emergency_where":

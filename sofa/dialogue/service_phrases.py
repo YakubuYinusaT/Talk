@@ -96,6 +96,7 @@ PHRASES: dict[str, list[str]] = {
     # medicines
     "health_drug_found": ["You can find {drug} at {where}. A pack costs about {price} naira."],
     "health_drug_prescription": ["Please note that this medicine needs a prescription from a doctor."],
+    "health_drug_trip": ["From {area}, {pharmacy} is {away}."],
     "health_drug_night": ["{pharmacy} is open all night."],
     "health_drug_none": ["I am sorry, none of the pharmacies I can see have {drug} in stock right now."],
 
@@ -176,6 +177,7 @@ CONTEXT: dict[str, str] = {
     "health_cancel_failed": "The clinic would not cancel the appointment. Apologises and suggests phoning the clinic.",
     "health_cancel_kept": "The caller decided to keep the appointment. Confirms it politely.",
     "health_sms_cancelled": "The text message that confirms a cancellation. {code} is the booking code.",
+    "health_drug_trip": "How long the trip to the nearest pharmacy with the medicine takes. {area}, {pharmacy} and {away} are facts and an estimate Talk worked out.",
     "health_drug_found": "Says where a medicine is in stock and what a pack costs. {drug}, {where} and {price} are facts.",
     "health_drug_prescription": "Adds that the medicine needs a doctor's prescription.",
     "health_drug_night": "Adds that a pharmacy is open all night. {pharmacy} is the pharmacy.",

@@ -109,9 +109,10 @@ caller ── phone network ──┬─ telephony provider in Nigeria ─┬─
 visitor ── browser ── Try it: a call from the browser, or a chat                                 (sofa/routes/tryit.py)
                                                          │
                                        Muse Voice Transcribe  (hears what was said)
-                                       Muse Spark 1.3         (urgency, what the caller wants, yes or no, as strict JSON)
-                                       keyword floor          (danger read with no model; can only raise the level)
+                                       keyword floor          (danger read first, with no model; can only raise the level)
+                                       Muse Spark 1.3         (reads the whole call and decides the next step, as strict JSON)
                                                          │
+                                       guard rails in code    (sofa/orchestrator/adapters/health_agent.py)
                                        Sofa health front desk (sofa/orchestrator/adapters/health.py)
                                        trips with Lagos traffic (sofa/health/travel.py)
                                                          │  signed requests, one secret per provider
@@ -124,7 +125,11 @@ visitor ── browser ── Try it: a call from the browser, or a chat        
 
 Talk holds no hospital records. Each provider runs its own system, returns structured facts over a signed connection, and Talk composes the wording that the caller hears.
 
-Muse Voice Transcribe hears the caller, and Talk gives it the names of Lagos areas, clinics and medicines to listen for. Muse Spark 1.3 reads each turn once, by meaning, in a strict JSON format with prompt caching. That one reading gives the urgency of the call, the operation the caller wants and whether they answered Talk's question with a yes or a no, so judging urgency adds no extra model call. An answer that does not fit the format is asked for once more, saying why, within four seconds, before Talk falls back to its rules, and the counts are shown on `/health`. When an answer does not fit a rule, a second short reading says what the caller meant: the thing that was asked, the earliest free time, a yes, a no, or something else. The model only ever names an operation from a registered list, and a place, a time or a medicine only counts when it is made of the caller's own words. The full design is in `docs/design.md`.
+Muse Voice Transcribe hears the caller, and Talk gives it the names of Lagos areas, clinics and medicines to listen for.
+
+Muse Spark 1.3 leads the conversation. Each turn it reads the whole call so far, both sides, with the places Sofa has offered and any booking it has proposed, and decides the one next step in a strict JSON format: find places, find a medicine, read free times, propose a booking, confirm it, cancel, ask a care team, or a short reply of its own. The same answer gives the urgency of the call, so judging urgency adds no extra model call. Because the model sees the whole call, "how long will it take me to get there" after a medicine answer, "the cheapest one", "No, I just need paracetamol" and a question about the fee in the middle of a booking are understood as a person would understand them, and a neighbourhood that Talk does not list, such as Palmgrove, is placed in the nearest area it does.
+
+The code takes the step and keeps the guard rails, whatever the model decides. Every fact comes from a provider: a place, a price, a time or a distance that the model writes in its own reply is spoken only if it was already said in the call, and a reply that brings in a new one is not spoken. A visit is booked only after Sofa proposed that exact place and time and the caller agreed, and cancelled only after the caller confirmed it. The emergency check on the caller's words runs before the model is asked, and the model can raise the urgency but never lower it. An area must be one of the areas Talk knows, and a day or a time must be made of the caller's own words. When the model gives no usable decision, because it is slow, unreachable or outside these rules, the rules-based front desk answers the turn as before, so a call never stops. `DIALOGUE_AGENT=false` leaves every turn to the rules. The full design is in `docs/design.md`.
 
 A trip is worked out inside Talk, with no network call and no model. The road distance comes from the straight-line distance between the caller's area and the place, with extra road for the lagoon crossings, and the speed comes from a Lagos traffic profile by hour and weekday. The figures are for planning a visit, which is why Talk says them as a range.
 
@@ -159,6 +164,7 @@ We built Talk on Muse Voice Transcribe and Muse Spark, and we recorded every pro
 2. A measurement of the streamed path and of the second telephone number on real calls, so that the timings are confirmed on real phone lines.
 3. A longer reading of where the caller is, so that a description such as "my house is close to the big market in Ikorodu" is understood without a second question.
 4. Languages beyond English, as soon as a speech model hears them.
+5. Native tool calling, so that the model can take two or three steps in one turn (for example, find the nearest pharmacy and then read its hours) instead of one step a turn.
 
 ## Privacy and data handling
 

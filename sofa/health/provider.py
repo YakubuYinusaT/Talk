@@ -68,7 +68,13 @@ def refuse(reason: str) -> dict:
 def name_scores(text: str, pool: list[data.Facility]) -> list[tuple[float, data.Facility]]:
     """The places a caller named, best match first, with how well each matched. Words like clinic or hospital say nothing about which one, so they are ignored, and a word from a place's own
     name counts for more than the area it is in ("Aguda" is an area nickname, but it is also the name of one health centre)."""
+    whole = [f for f in pool if " ".join(words(f.name)) == " ".join(words(text))]
+    if whole:     # the place's full name, as Talk said it: that place and no other ("Ikorodu Greenfield General Hospital", not the Greenfield clinic too)
+        return [(2.0, f) for f in whole]
     tokens = [t for t in words(text) if t not in GENERIC]
+    if not tokens:     # only the kind of place ("the general hospital", "a private clinic"): the places of that kind
+        said = set(words(text)) | ({"clinic"} if "private" in words(text) else set())
+        return [(0.8, f) for f in pool if set(words(f.kind)) and set(words(f.kind)) <= said]
     scored: list[tuple[float, data.Facility]] = []
     for f in pool:
         names = {w for w in words(f.name) if w not in GENERIC}

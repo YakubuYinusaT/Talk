@@ -29,15 +29,23 @@ There are three ways in, and all three share the same turn code, so a conversati
 ## How one turn is handled
 
 1. **Hearing.** Muse Voice Transcribe turns the caller's speech into text. Talk gives it the names of Lagos areas, clinics and medicines to listen for, so that a place such as Aguda or a medicine such as amoxicillin is recognised more often.
-2. **Understanding.** Muse Spark 1.3 reads the sentence by meaning and returns one strict JSON answer. At the same moment, the health front desk reads the details of the request, which are the need, the area, the place, the time and the medicine. Rules run first, and a second, small model call fills in what the rules cannot.
-3. **Acting.** The health front desk asks the provider systems for facts, using signed requests, and decides what to say next.
+2. **Deciding.** The keyword floor reads the caller's words for danger first, with no model. Then Muse Spark 1.3 reads the whole call so far, both sides, and returns one strict JSON decision: the urgency, the one next step, and the details that step needs (where the caller is, the need, the place, the day and time, the medicine). When it gives no usable decision, the rules-based reading described under Understanding takes the turn.
+3. **Acting.** The health front desk takes the step: it asks the provider systems for facts, using signed requests, and keeps the guard rails described under The model leads the call.
 4. **Wording.** Every sentence comes from a stored phrase. For the conversation around the facts, such as a greeting or a polite question, Muse Spark may write a more natural sentence, but it is accepted only if it keeps every placeholder, invents no number and stays short. Every sentence of the health front desk carries a provider's own facts or a patient guide's own words, so those are always spoken exactly from their stored phrases.
 5. **Speaking.** A voice speaks the sentence. The hosted voice is the first choice, and a voice on the server itself takes over when the hosted one is out of reach.
 6. **Recording what happened.** Each turn keeps a trace of its steps, which are heard, understood, read, asked, booked, request filed and replied, each with the time it took. The trace holds what happened and never a phone number, a caller identifier or a secret.
 
 ## Orchestration
 
-### Understanding
+### The model leads the call
+
+Each turn Muse Spark sees the whole call, both sides (the last 24 lines), the places on the table with their numbers, any booking or cancellation Talk has proposed, and the open question. It answers with a decision in a strict format whose choices are closed lists: the urgency (none, possible or emergency), one step from a fixed list (find_places, medicine, free_times, offer_booking, confirm_booking, cancel_booking, confirm_cancel, place_status, ask_care_team, reply, person, goodbye, other), an area from the areas Talk knows (a neighbourhood not on the list is mapped by the model to the nearest one), a need from the closed list, a place (an option number, a name Talk said, or the caller's words for a place), a day and time, a medicine, and a reply. The code in `sofa/orchestrator/adapters/health_agent.py` takes the step through the health front desk, so the provider calls, the wording and the follow-ups are the same as before.
+
+The guard rails are in code. A reply the model writes is spoken only if every figure and every named place in it was already said in the call. A booking is made only from a proposal Talk made in the previous turn and the caller's yes; a model that jumps to confirming gets a proposal first. A cancellation needs the same. A day or a time counts only if it is made of the caller's own words, and an area only if it is on the list. The emergency floor runs before the model, and the model's urgency can raise the level but never lower it; once the emergency help has started, its own questions are answered by the rules. When the model's answer is missing, slow or outside the format, the rules answer the turn. `DIALOGUE_AGENT=false` gives every turn to the rules.
+
+### Understanding (the rules-led path)
+
+When the model gives no usable decision, or the model-led path is switched off, the turn is read as follows.
 
 The model never supplies a fact. It only chooses what the caller wants, and its answer has two required fields: `action` and `answer`. The `action` is one of the registered tool names or one of `chat`, `human` and `unclear`. The `answer` says whether the caller answered the question that Talk had just asked with a yes or a no. Every field is required in the answer format, because a model that is allowed to skip fields skips most of them, and the choices are written into the format as a closed list, so the model cannot name an operation that does not exist. Anything that is not on the registry is treated as not understood before anything can act on it.
 

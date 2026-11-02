@@ -134,7 +134,9 @@ class CallManager:
 
     async def handle(self, transcript: str, confidence: float) -> Outcome:
         out = self.note_asked_more(await self.reword(await self._handle(transcript, confidence)))
-        self.st["talk_said"] = (out.extra.get("reference") or out.text or "")[:400]   # the model reads the caller's next words against what Sofa has just said
+        self.st["talk_said"] = (out.text or "")[:400]   # the model reads the caller's next words against what Sofa has just said
+        if transcript.strip():   # the whole call, both sides, for the model that leads it (adapters/health_agent.py)
+            self.st["log"] = ((self.st.get("log") or []) + [["caller", transcript.strip()[:300]], ["sofa", (out.text or "")[:700]]])[-24:]
         return out
 
     def note_asked_more(self, out: Outcome) -> Outcome:
@@ -160,6 +162,10 @@ class CallManager:
             return health.ambulance(self, transcript)
         if health and not in_emergency and signal.level == floor.EMERGENCY:  # the words alone say someone may be in danger: no model is waited for
             return await self.emergency(health, transcript, signal)
+        if health and self.svc.settings.dialogue_agent and not in_emergency:
+            out = await self.agent_turn(health, transcript, signal)
+            if out is not None:
+                return out
         if health and not st.get("pending"):  # a fresh request, not an answer to a question: read it now, alongside the understanding call below
             self._health_read = asyncio.ensure_future(health.read(self, transcript))
         u = await self.understand(transcript)
@@ -209,6 +215,27 @@ class CallManager:
             return self.reply("service_off", action=f"service_off_{domain}", service=registry.SERVICES[domain].label, offered=templates.join_list(offered))
         st["domain"] = self.call.service_domain = domain
         return await self.run_service_turn(adapter, transcript, confidence)
+
+    async def agent_turn(self, health, transcript: str, signal) -> Outcome | None:
+        """The model reads the whole call and decides the step; the health front desk takes it. The urgency is checked first, and the model can only raise
+        what the caller's words alone gave. None when the model gave no usable decision: the rules then answer the turn."""
+        st = self.st
+        decided = await health.agent.decide(self, transcript)
+        if decided is None:
+            return None
+        heard = floor.combine(signal, decided.urgency)
+        if heard.level == floor.EMERGENCY:
+            return await self.emergency(health, transcript, heard)
+        if heard.level == floor.POSSIBLE and not st.get("danger_asked"):
+            st["danger_asked"] = True    # asked once in a call: a caller who said no is not asked again for the same worry
+            self.note("urgency", level=heard.level, source=heard.source, hits=list(heard.hits))
+            return health.danger_check(self, transcript)
+        out = await health.agent.act(self, decided, transcript)
+        if out is not None:
+            st["low_conf"] = st["unknown_streak"] = st["lost_streak"] = 0
+            if decided.action not in ("other", "goodbye", "person"):
+                st["domain"] = self.call.service_domain = health.domain
+        return out
 
     async def run_service_turn(self, adapter, transcript: str, confidence: float) -> Outcome:
         """Let a service take the turn, and count the turns in a row that the service itself could not make sense of. Inside a service the three-unknown-turns rule above

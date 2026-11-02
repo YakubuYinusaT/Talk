@@ -125,6 +125,10 @@ WANTS = {"health.find_facility": "to find a clinic, a hospital or a pharmacy", "
 URGENCY_SOURCES = {"floor": "Keyword floor", "model": "Language model", "both": "Keyword floor and language model", "caller": "The caller said so"}
 MEANT = {"gave_it": "The caller answered the question.", "earliest": "The caller wants the earliest free time.", "yes": "The caller said yes.",
          "no": "The caller said no.", "something_else": "The caller asked for something different."}
+STEPS = {"find_places": "find places near the caller", "medicine": "find the medicine in stock", "free_times": "read the free times at a place",
+         "offer_booking": "propose a booking", "confirm_booking": "book the visit the caller agreed to", "cancel_booking": "find the visit to cancel",
+         "confirm_cancel": "cancel the visit the caller confirmed", "place_status": "check a place's hours and queue", "ask_care_team": "ask the care team's guide",
+         "reply": "answer from what was already said", "person": "pass the caller to a person", "goodbye": "say goodbye", "other": "leave it to the general service"}
 REQUEST_KINDS = {"question": "A question for the staff", "person": "A wish to speak to a person", "emergency": "An emergency"}
 
 
@@ -200,6 +204,17 @@ def describe_trace(trace: list[dict] | None, show_words: bool = True) -> list[di
             step["meta"] = f"Hold {scrub(str(e.get('code') or ''))}"
             desk = desk_of(e.get("provider") or "")
             step["link"] = {"label": "Front desk", "href": desk} if desk else None
+        elif kind == "decided":
+            step["title"] = "Decided"
+            step["text"] = f"With the whole call in view, the next step is to {STEPS.get(str(e.get('action')), str(e.get('action') or 'answer'))}."
+            found = [(label, e.get(key)) for label, key in (("Area", "area"), ("Place", "place"), ("Time", "when"), ("Medicine", "medicine")) if e.get(key)]
+            if found and show_words:
+                step["text"] += " " + " ".join(f"{label}: {scrub(str(v))}." for label, v in found)
+            step["meta"] = " · ".join(f for f in (pretty_model(e.get("model")) or "Language model", _ms(e.get("ms"))) if f)
+        elif kind == "guard":
+            step["title"] = "Guard rail"
+            step["text"] = "The model's own reply named a fact that was not said in this call, so it was not spoken and the rules answered instead."
+            step["meta"] = "Code check · no model"
         elif kind == "meant":
             step["title"] = "Understood"
             step["text"] = MEANT.get(str(e.get("meaning")), "It was not clear what the caller meant by the answer.")
