@@ -55,7 +55,7 @@ class Decision(BaseModel):
     search_area: str | None = None
     place: str | None = None
     when: str | None = None
-    medicines: list[str] = []
+    medicines: list[str] | None = []      # the model sometimes writes null for none
     question: str | None = None
     reply: str | None = None
 
@@ -220,7 +220,7 @@ class HealthAgent:
         got.need = got.need if got.need in gazetteer.NEED_CHOICES else None
         got.when = self.grounded_when(gw.st, transcript, got.when)
         gw.note("decided", action=got.action, urgency=got.urgency or "none", area=got.caller_area or got.search_area, place=got.place, when=got.when,
-                medicine=", ".join(got.medicines) or None, model=getattr(gw.svc.llm, "model", ""), ms=int((time.perf_counter() - started) * 1000))
+                medicine=", ".join(got.medicines or []) or None, model=getattr(gw.svc.llm, "model", ""), ms=int((time.perf_counter() - started) * 1000))
         return got
 
     # ---- the guard rails --------------------------------------------------------------------------------------
@@ -304,7 +304,7 @@ class HealthAgent:
             place = options[int(place) - 1]["n"]
         need = d.need or ("pharmacy" if d.kind == "pharmacy" else None)
         return Request(need=need, area=d.search_area or d.caller_area, origin=d.caller_area, facility=place or None,
-                       when=None if d.when == "earliest" else d.when, earliest=d.when == "earliest", drug=d.medicines[0] if d.medicines else None,
+                       when=None if d.when == "earliest" else d.when, earliest=d.when == "earliest", drug=(d.medicines or [None])[0],
                        utterance=transcript[:300])
 
     async def act(self, gw, d: Decision, transcript: str):
@@ -331,7 +331,7 @@ class HealthAgent:
         if a == "reserve_medicine":
             st["pending"] = None
             desk.recall(gw, "health.drug_availability", req)
-            product = (d.medicines[0] if d.medicines else None) or req.drug or (desk.memory(gw).get("req") or {}).get("drug")
+            product = ((d.medicines or [None])[0]) or req.drug or (desk.memory(gw).get("req") or {}).get("drug")
             if not product:
                 return None
             place = (d.place or "").strip() or (desk.memory(gw).get("pharmacy") or {}).get("n")
@@ -354,9 +354,9 @@ class HealthAgent:
                 "ask_care_team": "health.ask_the_centre"}[a]
         if a == "find_places" and d.kind == "pharmacy":
             req.need = "pharmacy"
-        if a == "medicine" and len(d.medicines) > 1:     # a kind of medicine: the products that fit, at the nearest pharmacy that has them
+        if a == "medicine" and len(d.medicines or []) > 1:     # a kind of medicine: the products that fit, at the nearest pharmacy that has them
             self.desk.recall(gw, "health.drug_availability", req)
-            return await desk.drug_options(gw, req, d.medicines)
+            return await desk.drug_options(gw, req, d.medicines or [])
         if a == "medicine" and not req.drug:
             req.drug = gazetteer.match_drug(transcript)
         if a == "ask_care_team":

@@ -14,6 +14,7 @@ import hmac
 import json
 import logging
 import time
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import PlainTextResponse, Response
@@ -36,9 +37,9 @@ _tasks: set = set()
 
 
 class Photo(BaseModel):
-    kind: str = "other"            # prescription | medicine_pack | other
-    medicines: list[str] = []
-    summary: str = ""
+    kind: Literal["prescription", "medicine_pack", "other"] | None = "other"
+    medicines: list[str] | None = []
+    summary: str | None = ""
 
 
 PHOTO_PROMPT = ("PHOTO. A person chatting with Talk, a health assistant in Lagos, sent this photo. Say what it is: a prescription, a medicine pack, or something "
@@ -158,12 +159,13 @@ async def words_of(svc, message: dict) -> str | None:
         caption = str(image.get("caption") or "").strip()[:500]
         if got is None:
             return None
-        photo = await svc.llm.see(Photo, PHOTO_PROMPT, got[0], got[1], caption)     # read by Muse Spark 1.3 (VISION_MODEL), the photo itself is not kept
-        log.info("a %s photo read by %s: %d medicines", photo.kind, getattr(svc.llm, "vision_model", ""), len(photo.medicines))
-        if photo.kind not in ("prescription", "medicine_pack") or not photo.medicines:
+        photo = await svc.llm.see(Photo, PHOTO_PROMPT, got[0], got[1], caption)
+        medicines = [m for m in (photo.medicines or []) if m and m.strip()]     # read by Muse Spark 1.3 (VISION_MODEL), the photo itself is not kept
+        log.info("a %s photo read by %s: %d medicines", photo.kind, getattr(svc.llm, "vision_model", ""), len(photo.medicines or []))
+        if not medicines:     # whatever the photo is called, it is read when the model found a medicine on it
             return None
         what = "a prescription" if photo.kind == "prescription" else "a medicine pack"
-        return f"I am sending a photo of {what}. The medicines on it are: {'; '.join(m[:80] for m in photo.medicines[:6])}. {caption}".strip()
+        return f"I am sending a photo of {what}. The medicines on it are: {'; '.join(m[:80] for m in medicines[:6])}. {caption}".strip()
     return None
 
 

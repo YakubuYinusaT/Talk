@@ -153,3 +153,14 @@ def test_without_a_template_the_late_reminder_goes_by_sms(client, happ, wa, hdb)
     hdb.expire_all()
     reminder = hdb.scalars(select(Notification).where(Notification.template == "health_reminder")).one()
     assert reminder.channel == "sms" and wa.templates == []
+
+
+def test_a_photo_is_read_whatever_the_model_calls_it_when_it_found_a_medicine(client, happ, wa):
+    wa.photos["img3"] = (b"jpeg", "image/jpeg")
+
+    async def see(model, system, image, mime, caption=""):
+        return Photo(kind=None, medicines=["CIPROTAB 500", "CIPROFLOXACIN TABLETS USP 500 mg"])
+
+    happ.state.svc.llm.see = see
+    post(client, [{"from": WA_ID, "id": "m9", "type": "image", "image": {"id": "img3", "caption": "I am in Yaba. Can I get this?"}}])
+    assert "could not read that" not in wa.sent[-1][1] and "Ciprofloxacin" in wa.sent[-1][1]
