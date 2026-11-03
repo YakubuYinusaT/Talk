@@ -86,6 +86,15 @@ class Settings(BaseSettings):
     try_max_turns: int = 20          # a visitor's typed conversation ends after this many turns
     try_turns_per_hour: int = 60     # turns one visitor address may send in an hour
     try_session_minutes: int = 30    # a typed conversation is forgotten after this long
+    # WhatsApp, through Meta's WhatsApp Cloud API: people chat with Sofa there, and send photos of a medicine pack or a prescription. The webhook is
+    # /whatsapp/webhook; the verify token answers Meta's check of it, and the app secret proves each message came from Meta.
+    whatsapp_phone_number_id: str = ""
+    whatsapp_access_token: str = ""
+    whatsapp_verify_token: str = ""
+    whatsapp_app_secret: str = ""
+    whatsapp_business_account_id: str = ""
+    paystack_secret_key: str = ""    # with it, a caller pays by transfer into a Paystack account made for that payment; without it, the account is simulated
+    payment_hours: int = 8           # how long an account number for one payment stays valid (Paystack allows 15 minutes to 8 hours)
     dialogue_agent: bool = True      # the model reads the whole call and decides each step (sofa/orchestrator/adapters/health_agent.py); off = the rules decide
     caller_memory_days: int = 90     # Sofa remembers a caller's area and last clinic for this long after their last call; 0 = remembers nothing between calls
 

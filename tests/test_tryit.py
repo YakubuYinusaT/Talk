@@ -22,7 +22,8 @@ BOOK_THE_PRIVATE_CLINIC = ["Please help me find the nearest clinic for antenatal
                            "Yes, please go ahead."]
 EMERGENCY = "Please, my brother is not breathing, we are in Ikeja."
 ASK_ABOUT_PARKING = "Please ask the cancer centre about parking."
-KNOWN_STEPS = ["heard", "urgency", "understood", "meant", "read", "travel", "held", "asked", "booked", "request", "replied"]
+KNOWN_STEPS = ["heard", "urgency", "understood", "meant", "read", "travel", "held", "asked", "booked", "request", "replied", "decided", "guard", "payment",
+               "ordered"]
 
 
 def start(client, **headers):

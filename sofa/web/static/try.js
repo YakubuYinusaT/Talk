@@ -65,6 +65,21 @@
     log.scrollTop = log.scrollHeight;
   }
 
+  /* A test payment Talk asked for in this reply: a button that makes the transfer, as the caller would from their bank app. */
+  function payButton(d) {
+    var step = (d.trace || []).filter(function (s) { return s.step === "payment"; })[0];
+    var last = log.lastElementChild;
+    if (!step || !last) return;
+    var b = document.createElement("button");
+    b.type = "button"; b.className = "btn pay"; b.textContent = "Pay ₦" + Number(step.amount).toLocaleString() + " (test transfer)";
+    b.addEventListener("click", function () {
+      b.disabled = true;
+      post("/try/pay", { session: session, reference: step.reference }).then(function () { b.textContent = "Paid ✓"; b.classList.add("done"); })
+        .catch(function (e) { b.disabled = false; say(e.message, "err"); });
+    });
+    last.appendChild(b);
+  }
+
   function post(path, body) {
     return fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (data) { if (!r.ok) { throw new Error(data.error || "Something went wrong. Please try again."); } return data; });
@@ -127,6 +142,7 @@
     bubble("You", text); input.value = ""; lock(true); sendBtn.setAttribute("aria-busy", "true"); say("Talk is replying...");
     post("/try/turn", { session: session, text: text }).then(function (d) {
       bubble("Talk", d.reply, d.steps_html);
+      payButton(d);
       shown(d);
       if (fromScript && current) { current.next += 1; drawScript(); }
       if (d.ended) { over = true; say("Call ended. Start over to try again."); }
@@ -213,6 +229,7 @@
     post("/try/speak", { session: session, audio: audio }).then(function (d) {
       if (d.heard) { bubble("You", d.heard); }
       bubble("Talk", d.reply, d.steps_html);
+      payButton(d);
       shown(d);
       if (d.ended) { over = true; }
       lock(false); say("Talk is speaking..."); mic.disabled = false;

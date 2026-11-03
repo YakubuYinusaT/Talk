@@ -148,6 +148,7 @@ def codes_of(store: HospitalStore) -> set[str]:
     """Every reference this provider gave out (visits, requests and emergency places), by which Talk's texts about them are found. Sample visits are left out."""
     codes = {r["code"] for r in store.db.execute("SELECT code, caller_ref FROM appointments").fetchall() if not r["caller_ref"].startswith("sample-")}
     codes |= {r["code"] for r in store.db.execute("SELECT code FROM requests").fetchall()}
+    codes |= {r["code"] for r in store.db.execute("SELECT code FROM orders").fetchall()}
     return codes | {r["code"] for r in store.db.execute("SELECT code FROM emergency_holds").fetchall()}
 
 
@@ -164,6 +165,17 @@ def messages_of(store: HospitalStore, texts, now: datetime) -> list[dict]:
     return found
 
 
+def orders_of(store: HospitalStore, now: datetime, paid: dict) -> list[dict]:
+    """The medicines set aside for callers to collect, newest first, with what each costs and whether it has been paid for. Never a phone number."""
+    names = {d.id: d for d in data.DRUGS}
+    found = []
+    for r in store.orders():
+        f, d, at = store.by_id.get(r["facility_id"]), names.get(r["drug_id"]), datetime.fromisoformat(r["created"])
+        found.append({"code": r["code"], "pharmacy": f.name if f else r["facility_id"], "drug": d.name if d else r["drug_id"], "qty": r["qty"], "total": r["price"],
+                      "prescription": bool(d and d.prescription), "status": r["status"], "time": f"{at:%H:%M}", "age": age_words(at, now), "pay": paid.get(r["code"])})
+    return found
+
+
 def stock_of(store: HospitalStore) -> dict | None:
     """What each pharmacy holds of each medicine, for a provider that has pharmacies. The numbers are made up but steady (data.stock_level)."""
     pharmacies = [f for f in store.facilities if f.kind == "pharmacy"]
@@ -177,7 +189,7 @@ def stock_of(store: HospitalStore) -> dict | None:
     return {"rows": rows, "areas": [f.area for f in pharmacies], "places": len(pharmacies), "lines_in_stock": sum(1 for r in rows if r["places_with"] > 0)}
 
 
-def build(network: data.Network, store: HospitalStore, desk_key: str, key: str, staff: bool = False, extras: dict | None = None, texts=None) -> dict:
+def build(network: data.Network, store: HospitalStore, desk_key: str, key: str, staff: bool = False, extras: dict | None = None, texts=None, payments=None) -> dict:
     """Everything the template needs for one view of the desk. `key` is what the visitor put in the address; only a right key gives the staff buttons, and so does
     `staff`, which says that the request comes from the visitor a hospital made in the onboarding wizard belongs to. `extras` is what is particular to such a hospital."""
     now = store.clock()
@@ -186,8 +198,14 @@ def build(network: data.Network, store: HospitalStore, desk_key: str, key: str, 
     access = "staff" if marking else "off" if not desk_key else "wrong" if key else "read"
     places = places_of(store, now)
     groups, today_total, today_unmarked = visits_of(store, now)
+    paid = payments(codes_of(store)) if payments else {}     # what Talk asked each patient to pay by transfer, and whether it has arrived
+    if paid:
+        for g in groups:
+            for v in g["visits"]:
+                v["pay"] = paid.get(v["code"])
     waiting, answered = requests_of(store, now)
     stock = stock_of(store)
+    orders = orders_of(store, now, paid) if stock else []
     holds, rooms = holds_of(store, now)
     activity = activity_of(store, now)
     messages = messages_of(store, texts, now)
@@ -214,9 +232,9 @@ def build(network: data.Network, store: HospitalStore, desk_key: str, key: str, 
             "access": access, "marking": marking, "key": key if marking else "", "tiles": tiles, "places": places,
             "groups": groups, "bookable": any(p["bookable"] for p in places), "waiting": waiting, "answered": answered, "urgent": urgent, "stock": stock, "guide": guide,
             "book_places": sorted({(v["place_id"], v["place"]) for g in groups for v in g["visits"]}, key=lambda pair: pair[1]),
-            "demo": network.demo, "assistant": None, "embedded": False, "holds": holds, "rooms": rooms, "activity": activity, "messages": messages, "upcoming": upcoming,
+            "demo": network.demo, "assistant": None, "embedded": False, "holds": holds, "rooms": rooms, "activity": activity, "messages": messages, "orders": orders, "upcoming": upcoming,
             "marking_due": marking_due, "today_total": today_total, "app_shell": True, **(extras or {})}
 
 
-def render(network: data.Network, store: HospitalStore, desk_key: str, key: str, staff: bool = False, extras: dict | None = None, texts=None) -> str:
-    return TEMPLATES.get_template("desk.html").render(**build(network, store, desk_key, key, staff, extras, texts))
+def render(network: data.Network, store: HospitalStore, desk_key: str, key: str, staff: bool = False, extras: dict | None = None, texts=None, payments=None) -> str:
+    return TEMPLATES.get_template("desk.html").render(**build(network, store, desk_key, key, staff, extras, texts, payments))

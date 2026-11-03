@@ -24,7 +24,7 @@
 {% if rooms %}{% set sections = sections + [("emergency", "Emergency", "siren", holds|length or none, holds|length > 0)] %}{% endif %}
 {% set sections = sections + [("requests", "Requests", "inbox", waiting|length or none, urgent > 0)] %}
 {% if bookable %}{% set sections = sections + [("appointments", "Appointments", "calendar", today_total or none, false)] %}{% endif %}
-{% if stock %}{% set sections = sections + [("stock", "Medicine stock", "pill", none, false)] %}{% endif %}
+{% if stock %}{% set sections = sections + [("orders", "Orders", "inbox", orders|length or none, false), ("stock", "Medicine stock", "pill", none, false)] %}{% endif %}
 {% if guide %}{% set sections = sections + [("guide", "Patient guide", "book", none, false)] %}{% endif %}
 {% set sections = sections + [("messages", "Messages", "chat", messages|length or none, false), ("activity", "Activity", "pulse", none, false), ("places", "Places", "pin", places|length, false)] %}
 
@@ -220,6 +220,7 @@
               </div>
               <div class="state">
                 {% if v.passed %}{{ badge("Needs marking", "warning", "warn") }}{% else %}{{ badge(v.label, visit_tone.get(v.status, "neutral"), visit_icon.get(v.status, "clock")) }}{% endif %}
+                {% if v.pay %}{% if v.pay.status == "paid" %}{{ badge("Paid ₦" ~ "{:,}".format(v.pay.amount), "success", "check") }}{% else %}{{ badge("Awaiting ₦" ~ "{:,}".format(v.pay.amount), "warning", "clock") }}{% endif %}{% endif %}
               </div>
               {% if marking and v.status in ("booked", "confirmed") %}
               <div class="acts">
@@ -241,6 +242,26 @@
 
       {# ---- the medicine stock list, for a pharmacy: one row for each medicine and one column for each pharmacy ---- #}
       {% if stock %}
+      {# ---- the medicines set aside for callers to collect, with whether each is paid for ---- #}
+      <section class="panel card" id="orders" data-panel aria-labelledby="orders-title">
+        <div class="card-head">
+          <h2 class="card-title" id="orders-title">Orders</h2>
+          <p class="count">{{ orders|length }}</p>
+        </div>
+        {% if orders %}
+        <ol class="log">
+          {% for o in orders %}
+          <li id="order-{{ o.code }}">
+            <span class="log-icon">{{ icon("pill") }}</span>
+            <div><p class="log-cue"><b>{{ o.qty }} × {{ o.drug }}</b> <code>{{ o.code }}</code>{% if o.prescription %} {{ badge("Prescription", "info") }}{% endif %}</p>
+              <p class="log-detail">{{ o.pharmacy }} · &#8358;{{ "{:,}".format(o.total) }} · {% if o.pay and o.pay.status == "paid" %}{{ badge("Paid", "success", "check") }}{% elif o.pay %}{{ badge("Awaiting payment", "warning", "clock") }}{% else %}{{ badge("Pay at the counter", "neutral") }}{% endif %}</p></div>
+            <span class="when"><time>{{ o.time }}</time> · {{ o.age }}</span>
+          </li>
+          {% endfor %}
+        </ol>
+        {% else %}{{ empty("No orders yet") }}{% endif %}
+      </section>
+
       <section class="panel card" id="stock" data-panel aria-labelledby="stock-title">
         <div class="card-head">
           <h2 class="card-title" id="stock-title">Medicine stock</h2>

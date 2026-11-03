@@ -18,7 +18,7 @@ from sqlalchemy import select
 
 from ...dialogue import templates
 from ...dialogue.outcome import Outcome
-from ...health import floor, gazetteer, scope, speak, travel
+from ...health import data, floor, gazetteer, scope, speak, travel
 from ...health.data import AREAS
 from ...health.when import answer_of, hesitates, join_names, wants_earliest, lagos_now, parse_when, said_nothing_about_time, say_day, say_on_day, say_time, when_in_words
 from ...health.links import ProviderError, Unavailable
@@ -196,12 +196,14 @@ class HealthAdapter(ServiceAdapter):
             result = await gw.svc.provider_links.call(gw.db, spec, tool, args, ctx)
         except (ProviderError, Unavailable) as exc:
             log.warning("provider %s could not be asked %s: %s", spec.domain, op, exc)
-            self.note(gw, "asked", provider=spec.label, op=op, ms=int((time.perf_counter() - started) * 1000), ok=False, summary="could not be reached")
+            if op != "catalogue":     # the pharmacies' catalogue is reference data read every few minutes, not a step taken for this caller
+                self.note(gw, "asked", provider=spec.label, op=op, ms=int((time.perf_counter() - started) * 1000), ok=False, summary="could not be reached")
             return None
         finally:
             gw.db.commit()  # the call's record is saved at once: a database lock must not be held while the next slow step runs
         data = {**result.data, "ok": result.ok}
-        self.note(gw, "asked", provider=spec.label, op=op, ms=int((time.perf_counter() - started) * 1000), ok=result.ok, summary=summarise(op, data))
+        if op != "catalogue":
+            self.note(gw, "asked", provider=spec.label, op=op, ms=int((time.perf_counter() - started) * 1000), ok=result.ok, summary=summarise(op, data))
         return data
 
     @staticmethod
@@ -806,7 +808,25 @@ class HealthAdapter(ServiceAdapter):
         self.note(gw, "booked", provider=spec.label if spec else place["d"], place=place["n"], code=code, when=f"{say_day(start.date(), now.date())} at {say_time(start)}")
         if await self.text_caller(gw, text):
             said += " " + self.words(gw, "health_text_sent")
-        return self.say(gw, said, "health_booked")
+        pay = await self.ask_payment(gw, purpose="visit", code=code, place=sms_name, amount=int(place.get("fee") or 0))
+        return self.say(gw, f"{said} {pay}".strip(), "health_booked")
+
+    async def ask_payment(self, gw, *, purpose: str, code: str, place: str, amount: int) -> str:
+        """What the caller hears about paying: an account number for this one payment, by bank transfer, also sent by text. Nothing when there is nothing to
+        pay; the counter when no account could be had."""
+        if amount <= 0:
+            return ""
+        from ...services import payments
+
+        row = await payments.request_transfer(gw.db, gw.svc.settings, amount=amount, purpose=purpose, code=code, place=place, caller_id=gw.person.id)
+        if row is None:
+            return self.words(gw, "health_pay_at_counter", amount=f"{amount:,}")
+        until = (row.expires_at + timedelta(hours=1)).strftime("%H:%M")     # Lagos time
+        self.note(gw, "payment", reference=row.reference, amount=amount, channel=row.channel, purpose=purpose)
+        await self.text_caller(gw, self.words(gw, "health_sms_pay", amount=f"{amount:,}", code=code, place=place, bank=row.bank, number=row.account_number,
+                                              name=row.account_name, until=until, reference=row.reference), template="health_pay")
+        what = self.words(gw, "health_pay_what_visit" if purpose == "visit" else "health_pay_what_order")
+        return self.words(gw, "health_pay_transfer", what=what, amount=f"{amount:,}", bank=row.bank, number=payments.spaced(row.account_number), name=row.account_name)
 
     def remember_visit(self, gw, place: dict, appt: dict) -> None:
         """Talk keeps the code, the place and the time of a visit it booked, so it can remind the patient and follow up. Nothing about why they are going."""
@@ -815,11 +835,11 @@ class HealthAdapter(ServiceAdapter):
         gw.db.add(HealthAppointment(caller_id=gw.person.id, provider=place["d"], code=appt["code"], facility_name=place["n"], sms_name=place.get("sn") or place["n"],
                                     starts_local=appt["starts"]))
 
-    async def text_caller(self, gw, body: str) -> bool:
+    async def text_caller(self, gw, body: str, template: str = "health_notice") -> bool:
         """Only ever to the caller's own number. True when the text was accepted, so the call says it was sent only when it was."""
         from ...services.notify import send_sms
 
-        note = await send_sms(gw.db, gw.svc, to=gw.person.phone, body=body[:300], template="health_notice", caller_id=gw.person.id)
+        note = await send_sms(gw.db, gw.svc, to=gw.person.phone, body=body[:300], template=template, caller_id=gw.person.id, channel=gw.st.get("channel") or "sms")
         return note.status in ("sent", "mock_sent")
 
     # ---- cancelling --------------------------------------------------------------------------------------------------
@@ -897,6 +917,107 @@ class HealthAdapter(ServiceAdapter):
         if night and night not in pharmacies[:2]:
             text += " " + self.words(gw, "health_drug_night", pharmacy=night["name"])
         return self.say(gw, text, "health_drug")
+
+    async def offer_order(self, gw, req: Request, product: str, pharmacy: str | None = None) -> Outcome:
+        """Propose setting a medicine aside for the caller to collect: the pharmacy nearest them that has it (or the one they named), and the price. Nothing is
+        reserved until the caller agrees."""
+        near = req.area or req.origin
+        if not near and not pharmacy:
+            req.drug = product
+            return self.ask(gw, "where", "health.drug_availability", req, self.words(gw, "health_ask_area"))
+        args = {"drug": product, **({"lat": AREAS[near].lat, "lon": AREAS[near].lon} if near else {})}
+        answered = await self.ask_all(gw, "stock", args, "pharmacies")
+        if not answered:
+            return self.nothing_reachable(gw)
+        drug = next((a["drug"] for _, a in answered if a.get("drug")), None)
+        found = [{**p, "d": s.domain} for s, a in answered for p in a.get("pharmacies", []) if p.get("qty", 0) > 0]
+        if not drug or not found:
+            return self.say(gw, self.words(gw, "health_drug_none", drug=drug["name"] if drug else product), "health_order_none")
+        wanted = set(tokens(pharmacy or "")) - {"pharmacy", "the", "at", "everwell", "one"}
+        named = [p for p in found if wanted and wanted <= set(tokens(p["name"]))]
+        if req.origin:
+            self.with_travel(gw, found, req.origin)
+        best = sorted(named or found, key=lambda p: (self.how_far(p), p["name"]))[0]
+        place = {"d": best["d"], "id": best["id"], "n": best["name"], "sn": best.get("sms_name") or best["name"], "a": best.get("address", "")}
+        question = self.words(gw, "health_offer_order", drug=drug["name"], pharmacy=best["name"], total=f"{drug['price']:,}")
+        return self.ask(gw, "order_confirm", "health.drug_availability", req, question, place=place, product=drug["name"], total=drug["price"],
+                        prescription=bool(drug["prescription"]))
+
+    async def place_order(self, gw, req: Request, pending: dict) -> Outcome:
+        """The caller agreed: the pharmacy sets the pack aside, the caller is told the order code, and is asked to pay by transfer."""
+        place = pending["place"]
+        answer = await self.provider_call(gw, self.spec_of(place), "reserve", {"facility_id": place["id"], "drug": pending["product"], "qty": 1})
+        if answer is None:
+            return self.nothing_reachable(gw)
+        if not answer.get("ok"):
+            return self.say(gw, self.words(gw, "health_drug_none", drug=pending["product"]), "health_order_none")
+        order = answer["order"]
+        code = order["code"]
+        said = self.words(gw, "health_ordered", drug=order["drug"], pharmacy=place["n"], code=" ".join(code.split("-")[1]))
+        if order.get("prescription"):
+            said += " " + self.words(gw, "health_order_prescription")
+        await self.text_caller(gw, self.words(gw, "health_sms_ordered", code=code, drug=order["drug"], pharmacy=place["sn"],
+                                              address=place.get("a") or order.get("address", "")))
+        self.note(gw, "ordered", provider=getattr(self.spec_of(place), "label", place["d"]), place=place["n"], code=code, drug=order["drug"])
+        self.forget_offer(gw)
+        pay = await self.ask_payment(gw, purpose="medicine", code=code, place=place["sn"], amount=int(order.get("total") or 0))
+        return self.say(gw, f"{said} {pay}".strip(), "health_ordered")
+
+    async def catalogue(self, gw) -> list[dict]:
+        """The products the pharmacies keep, from their own catalogues: what each is for, its price, and whether it needs a prescription. Asked again after five
+        minutes, so a pharmacy that adds a product is heard without any change to Talk."""
+        import time
+
+        cached = getattr(self, "_catalogue", None)
+        if cached and time.monotonic() - cached[0] < 300:
+            return cached[1]
+        merged: dict[str, dict] = {}
+        for _, answer in await self.ask_all(gw, "catalogue", {}, "pharmacies"):
+            for product in answer.get("products", []):
+                merged.setdefault(product["name"], product)
+        products = list(merged.values())
+        if products:
+            self._catalogue = (time.monotonic(), products)
+        return products
+
+    async def drug_options(self, gw, req: Request, names: list[str]) -> Outcome:
+        """Several products that fit what the caller asked for ("a pain reliever"): the nearest pharmacy that has them, each with its price, and which of them
+        needs a prescription. The model chose the products from the pharmacies' catalogue; a pharmacist, not Talk, says which suits the caller."""
+        near = req.area or req.origin
+        if not near:
+            return self.ask(gw, "where", "health.drug_availability", req, self.words(gw, "health_ask_area"))
+        coords = {"lat": AREAS[near].lat, "lon": AREAS[near].lon}
+        products = [d for d in data.DRUGS if d.name in names][:4]
+        if not products:
+            req.drug = names[0] if names else req.drug
+            return await self.drug(gw, req)
+        answers = await asyncio.gather(*(self.ask_all(gw, "stock", {"drug": d.name, **coords}, "pharmacies") for d in products))
+        if not any(answers):
+            return self.nothing_reachable(gw)
+        stocked: dict[str, dict] = {}
+        for d, answered in zip(products, answers):
+            for _, a in answered:
+                for p in a.get("pharmacies", []):
+                    if p.get("qty", 1) > 0:
+                        stocked.setdefault(p["name"], {**p, "items": []})["items"].append(d)
+        if not stocked:
+            return self.say(gw, self.words(gw, "health_drug_options_none"), "health_drug_none")
+        pharmacies = list(stocked.values())
+        if req.origin:
+            self.with_travel(gw, pharmacies, req.origin)
+        pharmacies.sort(key=lambda p: (-len(p["items"]), self.how_far(p), p["name"]))
+        best = pharmacies[0]
+        items = join_names([f"{d.name} at about {d.price:,} naira a pack" for d in best["items"]], "and")
+        text = self.words(gw, "health_drug_options", pharmacy=best["name"], items=items)
+        if best.get("travel"):
+            text += " " + self.words(gw, "health_drug_trip", pharmacy=best["name"], area=req.origin, away=best["travel"])
+        needs = [d.name for d in best["items"] if d.prescription]
+        if needs:
+            text += " " + self.words(gw, "health_drug_options_rx_many" if len(needs) > 1 else "health_drug_options_rx", names=join_names(needs, "and"))
+        text += " " + self.words(gw, "health_drug_pharmacist")
+        self.remember(gw, req, "health.drug_availability")
+        self.memory(gw)["pharmacy"] = {"n": best["name"], "items": [d.id for d in best["items"]]}
+        return self.say(gw, text, "health_drug_options")
 
     # ---- the caller's answers ------------------------------------------------------------------------------------------
 
@@ -1086,6 +1207,14 @@ class HealthAdapter(ServiceAdapter):
             st["pending"] = None
             req.when = transcript.strip()[:120]
             return await self.offer_slot(gw, req, place, found)
+
+        if step == "order_confirm":     # "Shall I reserve it for you?"
+            st["pending"] = None
+            if answer == "yes":
+                return await self.place_order(gw, req, pending)
+            if answer == "no":
+                return gw.reply("declined", action="health_order_declined")
+            return None
 
         if step == "confirm":
             place, now = pending["place"], self.now()

@@ -211,6 +211,18 @@ def describe_trace(trace: list[dict] | None, show_words: bool = True) -> list[di
             if found and show_words:
                 step["text"] += " " + " ".join(f"{label}: {scrub(str(v))}." for label, v in found)
             step["meta"] = " · ".join(f for f in (pretty_model(e.get("model")) or "Language model", _ms(e.get("ms"))) if f)
+        elif kind == "ordered":
+            step["title"] = "Reserved"
+            what = f" {scrub(str(e.get('drug')))} at {scrub(str(e.get('place')))}" if show_words and e.get("drug") else " the medicine"
+            step["text"] = f"{scrub(str(e.get('provider') or 'The pharmacy'))} set aside{what}."
+            step["meta"] = f"Order {scrub(str(e.get('code') or ''))}"
+            desk = desk_of(e.get("provider") or "")
+            step["link"] = {"label": "Orders", "href": desk + "#orders"} if desk else None
+        elif kind == "payment":
+            step["title"] = "Payment"
+            what = "the visit" if e.get("purpose") == "visit" else "the order"
+            step["text"] = f"{int(e.get('amount') or 0):,} naira for {what}, by bank transfer to an account made for this one payment, sent by text."
+            step["meta"] = "Paystack" if e.get("channel") == "paystack" else "Simulated bank"
         elif kind == "guard":
             step["title"] = "Guard rail"
             step["text"] = "The model's own reply named a fact that was not said in this call, so it was not spoken and the rules answered instead."

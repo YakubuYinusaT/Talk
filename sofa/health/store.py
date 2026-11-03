@@ -49,6 +49,9 @@ class HospitalStore:
                 code TEXT PRIMARY KEY, caller_ref TEXT NOT NULL, kind TEXT NOT NULL, urgent INTEGER NOT NULL DEFAULT 0, summary TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'open', reply TEXT NOT NULL DEFAULT '', created TEXT NOT NULL, replied TEXT);
             CREATE INDEX IF NOT EXISTS requests_status ON requests (status, urgent, created);
+            CREATE TABLE IF NOT EXISTS orders (
+                code TEXT PRIMARY KEY, facility_id TEXT NOT NULL, drug_id TEXT NOT NULL, qty INTEGER NOT NULL, price INTEGER NOT NULL,
+                caller_ref TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'reserved', created TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS emergency_holds (
                 code TEXT PRIMARY KEY, facility_id TEXT NOT NULL, caller_ref TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'held', created TEXT NOT NULL,
                 expires TEXT NOT NULL);
@@ -246,4 +249,24 @@ class HospitalStore:
         return best if best_score >= 0.78 else None
 
     def pharmacies_with(self, drug: data.Drug) -> list[data.Facility]:
-        return [f for f in self.facilities if f.kind == "pharmacy" and data.stock_level(f.id, drug.id) > 0]
+        return [f for f in self.facilities if f.kind == "pharmacy" and self.packs_left(f.id, drug.id) > 0]
+
+    def packs_left(self, facility_id: str, drug_id: str) -> int:
+        """The packs on the shelf less the ones set aside for callers who have not collected them yet."""
+        held = self.db.execute("SELECT COALESCE(SUM(qty), 0) FROM orders WHERE facility_id = ? AND drug_id = ? AND status = 'reserved'", (facility_id, drug_id)).fetchone()[0]
+        return max(0, data.stock_level(facility_id, drug_id) - held)
+
+    def reserve(self, f: data.Facility, drug: data.Drug, caller_ref: str, qty: int = 1) -> dict | None:
+        """Set packs aside for a caller to collect. None when there are not enough left."""
+        qty = max(1, min(int(qty), 5))
+        with self.lock:
+            if self.packs_left(f.id, drug.id) < qty:
+                return None
+            code = "ORD-" + "".join(secrets.choice(CODE_ALPHABET) for _ in range(4))
+            self.db.execute("INSERT INTO orders (code, facility_id, drug_id, qty, price, caller_ref, created) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            (code, f.id, drug.id, qty, drug.price * qty, caller_ref, self.clock().isoformat()))
+            self.db.commit()
+        return {"code": code, "facility_id": f.id, "drug": drug.name, "qty": qty, "total": drug.price * qty, "prescription": drug.prescription}
+
+    def orders(self, limit: int = 30) -> list[sqlite3.Row]:
+        return self.db.execute("SELECT * FROM orders ORDER BY created DESC LIMIT ?", (limit,)).fetchall()

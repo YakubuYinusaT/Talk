@@ -138,6 +138,14 @@ Muse Spark now reads the whole call, both sides, and decides the next step, whil
 
 The tests script the model's decisions and check the guard rails: a booking only after a proposal and a yes, a reply with a figure that was not said is not spoken, the emergency words are answered before the model is asked, an area outside the list and a day the caller never said are not used, and the rules answer when the model gives nothing.
 
+## Entry 18. Medicines by meaning, and photos of prescriptions
+
+A test on the live service on 3 November asked for "a pain reliever" and for "antimalaria drugs". Sofa asked for the name as written on the pack, although the pharmacies stock paracetamol, ibuprofen and an antimalarial. The model had never been shown what the pharmacies keep, and the code only recognised product names.
+
+Each pharmacy system now publishes its catalogue (product, what it is for, price, prescription), Talk reads it every few minutes, and Muse Spark is shown it with the conversation and returns the exact products that fit what the caller means. With the live model on 3 November: "a pain reliever" gave paracetamol and ibuprofen with prices, "antimalaria drugs" gave artemether-lumefantrine and sulphadoxine-pyrimethamine with the prescription note, "something for catarrh" gave loratadine, and "what is the difference between paracetamol and ibuprofen?" was answered from the catalogue's own words. A reply may quote the catalogue, and a figure in it that is in neither the call nor the catalogue is still not spoken.
+
+Muse Spark also reads photos sent on WhatsApp. On a test prescription it returned both medicines exactly as written, with the hospital and the date, in 4.5 seconds, and the medicines then go into the conversation like typed words. The photo itself is not kept, and the model is told to leave out a patient's name and number.
+
 ## Open improvements, starting with the most valuable
 
 1. Realtime transcription over Meta's WebSocket while the caller speaks, at `wss://api.meta.ai/v1/asr/realtime`, so that the words are ready when the caller stops. We expect it to save about 2.5 seconds on every turn compared with reading a finished recording.

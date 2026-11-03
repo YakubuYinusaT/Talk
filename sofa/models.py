@@ -98,6 +98,24 @@ class Notification(Row, Base):
     provider_message_id: Mapped[str | None] = mapped_column(String(100))
 
 
+class Payment(Row, Base):
+    """A payment Talk asked a caller to make by bank transfer, for one visit or one medicine order (sofa/services/payments.py)."""
+    __tablename__ = "payments"
+    reference: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    purpose: Mapped[str] = mapped_column(String(20))                    # visit | medicine
+    code: Mapped[str] = mapped_column(String(20), index=True)           # the booking or order code the payment is for
+    place: Mapped[str] = mapped_column(String(160))
+    amount: Mapped[int] = mapped_column(Integer)                       # naira
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending | paid
+    channel: Mapped[str] = mapped_column(String(20), default="simulated")   # paystack | simulated
+    bank: Mapped[str] = mapped_column(String(80), default="")
+    account_number: Mapped[str] = mapped_column(String(20), default="")
+    account_name: Mapped[str] = mapped_column(String(160), default="")
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    caller_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+
+
 class Handoff(Row, Base):
     """A request Talk could not finish, passed to the people who follow up."""
     __tablename__ = "handoffs"

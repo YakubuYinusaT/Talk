@@ -4,7 +4,7 @@
 {% from "_ui.html" import button, notice %}
 {% from "_trace.html" import trace_panel %}
 
-{% macro chat(scripts, max_chars, test_number="", pick=True, auto=False, heading="Conversation", modes=False, numbers=[]) %}
+{% macro chat(scripts, max_chars, test_number="", pick=True, auto=False, heading="Conversation", modes=False, numbers=[], whatsapp="") %}
 <section class="chat" aria-labelledby="chat-title">
   <div class="card-head">
     <h2 class="card-title" id="chat-title">{{ heading }}</h2>
@@ -27,6 +27,13 @@
     </div>
     {% endif %}
     <div id="chat-mode"{% if modes %} role="tabpanel" aria-labelledby="tab-chat" hidden{% endif %}>
+    {% if whatsapp %}
+    <div class="wa-block">
+      <a class="btn wa" href="https://wa.me/{{ whatsapp }}?text=Hi%20Sofa" target="_blank" rel="noopener">Chat on WhatsApp</a>
+      <p class="muted small">Photos of a prescription or a medicine pack welcome.</p>
+      <p class="wa-or muted small">No WhatsApp? Chat here.</p>
+    </div>
+    {% endif %}
     {% if pick %}
     <div class="scripts-block">
       <h3 class="scripts-label" id="scripts-title">Examples</h3>

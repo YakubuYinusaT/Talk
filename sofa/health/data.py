@@ -213,6 +213,31 @@ DRUGS: tuple[Drug, ...] = (
     Drug("bpmonitor", "Blood pressure monitor", "device", 18000, aliases=("blood pressure monitor", "bp monitor")),
 )
 
+# What each product is for, as the pharmacy's own catalogue says it (the provider publishes it with its "catalogue" operation). No dose and no advice:
+# a pharmacist decides what suits the person.
+USES: dict[str, str] = {
+    "paracetamol": "for mild pain, headache and fever",
+    "ibuprofen": "for pain, swelling and fever",
+    "act": "the standard treatment for uncomplicated malaria",
+    "sulphadoxine": "used to prevent malaria in pregnancy, as a clinic directs",
+    "ors": "to replace the water and salts lost with diarrhoea",
+    "zinc": "given to children with diarrhoea, together with oral rehydration salts",
+    "folic": "a supplement before and during pregnancy",
+    "iron": "for low blood and during pregnancy",
+    "vitc": "a vitamin supplement",
+    "multivit": "a daily vitamin supplement",
+    "amoxicillin": "an antibiotic for bacterial infections",
+    "cotrimoxazole": "an antibiotic for some infections",
+    "metformin": "for type 2 diabetes",
+    "amlodipine": "for high blood pressure",
+    "salbutamol": "a reliever inhaler for asthma",
+    "loratadine": "for allergies, sneezing and itching",
+    "omeprazole": "for heartburn and stomach ulcers",
+    "pills": "daily contraceptive pills",
+    "condom": "for protection and contraception",
+    "bpmonitor": "to check blood pressure at home",
+}
+
 
 def stock_level(facility_id: str, drug_id: str) -> int:
     """How many packs a pharmacy holds: made up but fixed, so a demo gives the same answer twice. Some are out of stock on purpose."""

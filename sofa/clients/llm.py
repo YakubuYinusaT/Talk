@@ -98,6 +98,26 @@ class LLMClient:
         self.stats["repaired"] += 1
         return got
 
+    async def see(self, model, system: str, image: bytes, mime: str, caption: str = ""):
+        """What a photo shows, read by the model, as an instance of `model`. Returns an empty instance when it cannot be read."""
+        import base64
+
+        content = [{"type": "text", "text": f"CAPTION: {caption or 'none'}"},
+                   {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{base64.b64encode(image).decode()}"}}]
+        payload = {"model": self.model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}],
+                   **self.schema_format("photo", model.model_json_schema())}
+        if self.meta:
+            payload.update(max_tokens=EXTRACT_MAX_TOKENS + META_REASONING_ROOM, reasoning_effort=self.reasoning_effort)
+        else:
+            payload["max_completion_tokens"] = EXTRACT_MAX_TOKENS
+        try:
+            resp = await self.http.post(f"{self.base}/v1/chat/completions", json=payload)
+            resp.raise_for_status()
+            return self._read(model, resp.json()["choices"][0]["message"]["content"])[0]
+        except Exception as exc:     # a photo that cannot be read costs the person nothing: they are asked to type instead
+            log.warning("a photo could not be read: %s", type(exc).__name__)
+            return model()
+
     @staticmethod
     def _read(model, content):
         raw = json.loads(content)

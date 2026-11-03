@@ -20,6 +20,7 @@ import re
 from urllib.parse import urlparse
 import secrets
 import time
+import uuid
 from collections import deque
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -112,9 +113,12 @@ async def body_of(request: Request):
 
 
 @router.get("")
-def page(request: Request, _=Depends(enabled)):
-    s = request.app.state.svc.settings
+async def page(request: Request, _=Depends(enabled)):
+    svc = request.app.state.svc
+    s = svc.settings
+    whatsapp = await svc.whatsapp.display_number() if getattr(svc, "whatsapp", None) else ""     # chatting is on WhatsApp first, here as a backup
     return templates.TemplateResponse(request, "try.html", {
+        "whatsapp": whatsapp,
         "request": request, "brand": "Talk", "scripts": SCRIPTS, "max_chars": MAX_CHARS, "max_turns": s.try_max_turns, "minutes": s.try_session_minutes,
         "providers": ui.providers(), "test_number": getattr(s, "test_number", ""),
         "numbers": [n for n in (getattr(s, "test_number", ""), getattr(s, "test_number_international", "")) if n],
@@ -224,6 +228,33 @@ async def turn(request: Request, _=Depends(enabled)):
     if len(text) > MAX_CHARS:
         return refuse(400, f"Please keep it to {MAX_CHARS} characters or fewer.")
     return await guarded(request, session, lambda: voice.run_text_turn(svc, session, text))
+
+
+@router.post("/pay")
+async def pay(request: Request, _=Depends(enabled)):
+    """The visitor makes the transfer for a payment of their own conversation, as a caller would from their bank app. Every payment of this build is a test one:
+    simulated, or made in Paystack's test mode (a live key is refused), and Paystack's test mode has no way to pretend that a customer paid."""
+    from sqlalchemy import select
+
+    from ..models import Call, Payment
+    from .payments import confirm
+
+    svc = request.app.state.svc
+    body = await body_of(request)
+    if isinstance(body, JSONResponse):
+        return body
+    session, reference = body.get("session"), body.get("reference")
+    if not isinstance(session, str) or session not in state(request)["sessions"] or not isinstance(reference, str):
+        return refuse(404, "This conversation has expired. Please start over.")
+    st = svc.sessions.get(session) or {}
+    with svc.session_factory() as db:
+        call = db.get(Call, uuid.UUID(st["call_id"])) if st.get("call_id") else None
+        row = db.scalar(select(Payment).where(Payment.reference == reference))
+        if not call or not row or row.caller_id != call.caller_id or row.channel not in ("simulated", "paystack"):
+            return refuse(404, "There is no such payment in this conversation.")
+    if not await confirm(svc, reference):
+        return {"paid": True, "already": True}
+    return {"paid": True}
 
 
 @router.post("/speak")

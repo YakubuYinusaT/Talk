@@ -12,7 +12,7 @@ from .config import Settings, get_settings
 from .container import build_services
 from .db import init_db, make_engine, make_session_factory
 from .hardening import replace_known_defaults
-from .routes import demo, onboard, overview, tryit, twilio, voice
+from .routes import demo, onboard, overview, payments, tryit, twilio, voice, whatsapp
 
 
 def voice_in_use(settings: Settings) -> str:
@@ -72,13 +72,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(overview.router)
     app.include_router(demo.router)
     app.include_router(tryit.router)
+    app.include_router(payments.router)
+    app.include_router(whatsapp.router)
     app.include_router(onboard.router)
     if settings.synthetic_hospital:  # made-up provider systems beside Talk, each reached only through its own signed connection (see sofa/health)
         from .health import register as health_register
 
         from .services.notify import texts_about
 
-        for slug, provider_app in health_register.create_apps(settings, texts=lambda codes: texts_about(svc.session_factory, codes)).items():
+        from .services.payments import of_codes
+
+        apps = health_register.create_apps(settings, texts=lambda codes: texts_about(svc.session_factory, codes), payments=lambda codes: of_codes(svc.session_factory, codes))
+        for slug, provider_app in apps.items():
             app.mount(f"/synthetic/{slug}", provider_app)
 
     health_adapter = svc.orchestrator.adapter("health")

@@ -4,6 +4,7 @@ from .audio import AudioService
 from .clients.asr import MetaASRClient
 from .clients.llm import LLMClient
 from .clients.sms import SMSClient
+from .clients.whatsapp import WhatsAppClient
 from .clients.tts import build_tts
 from .config import Settings
 from .orchestrator.wiring import Orchestrator, build_orchestrator
@@ -25,6 +26,7 @@ class Services:
     orchestrator: Orchestrator = field(default_factory=build_orchestrator)  # registered service adapters and the tool registry
     provider_links: object = None  # reaches the provider systems behind the health front desk (sofa/health/links.py)
     onboarding: object = None      # the hospitals visitors made in the onboarding wizard (sofa/onboarding), when that is switched on
+    whatsapp: object = None        # people who chat with Sofa on WhatsApp (sofa/routes/whatsapp.py), when it is set up
 
 
 def build_asr(settings: Settings) -> MetaASRClient:
@@ -52,4 +54,5 @@ def build_services(settings: Settings, session_factory) -> Services:
         audio=AudioService(settings, tts),
         orchestrator=build_orchestrator(settings),
         provider_links=ProviderLinks(settings),
+        whatsapp=WhatsAppClient(settings.whatsapp_phone_number_id, settings.whatsapp_access_token) if settings.whatsapp_phone_number_id else None,
     )

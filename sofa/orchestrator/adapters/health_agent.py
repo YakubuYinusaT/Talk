@@ -30,7 +30,8 @@ ACTIONS = {
     "medicine": "which pharmacies have a medicine in stock, its price and how far they are (medicine, caller_area)",
     "free_times": "the next free appointment times at one place (place)",
     "offer_booking": "start or continue booking a visit (place or option number, when or earliest, need). Sofa then proposes one exact time and asks the caller to agree",
-    "confirm_booking": "ONLY when PROPOSED below is a booking Sofa has just offered and the caller clearly agrees to it now",
+    "reserve_medicine": "set a medicine aside at a pharmacy for the caller to collect and pay for (medicines: the one product; place: the pharmacy, if said). Sofa proposes it with the price and asks the caller to agree",
+    "confirm_booking": "ONLY when PROPOSED below is a visit or a medicine order Sofa has just offered and the caller clearly agrees to it now",
     "cancel_booking": "the caller wants to cancel their own visit (when, if they said which)",
     "confirm_cancel": "ONLY when Sofa has just asked the caller to confirm a cancellation and the caller clearly agrees",
     "place_status": "whether a place is open now and how long its queue is (place)",
@@ -54,7 +55,7 @@ class Decision(BaseModel):
     search_area: str | None = None
     place: str | None = None
     when: str | None = None
-    medicine: str | None = None
+    medicines: list[str] = []
     question: str | None = None
     reply: str | None = None
 
@@ -78,7 +79,7 @@ SCHEMA = {
         "search_area": _one_of(AREAS, "where to look, when it is not where the caller is"),
         "place": _text("the number of an option on the table such as 1 or 2, a place as Sofa named it, or the caller's own words for a place, such as the general hospital"),
         "when": _text("a day or time in the caller's own words, or the word earliest when they want the first free time"),
-        "medicine": _text("the medicine, in the caller's words"),
+        "medicines": {"type": "array", "items": {"type": "string"}, "description": "for medicine: the CATALOGUE products, by their exact names, that fit what the caller asked for; several when they asked for a kind of medicine"},
         "question": _text("for ask_care_team: the caller's question"),
         "reply": _text("for reply: what Sofa says, one or two short spoken sentences"),
     },
@@ -94,12 +95,19 @@ How to decide:
 - Never ask for something the caller has already said in this call. Carry every detail forward: the area, the need, the medicine, the place, the time.
 - Use a step whenever a fact is needed. In a reply, only use facts already said in this call; never make up a place, a price, a time, a distance or a stock level.
 - Never give medical advice, a diagnosis or a dose. A question about care at a centre goes to ask_care_team.
+- Medicines: the CATALOGUE below is what the pharmacies keep, from their own systems. Work out from what the caller means which products fit, in any
+  words they use ("a pain reliever", "antimalaria", "something for catarrh", a brand name), and give their exact CATALOGUE names in medicines: one when
+  they named a product, every one that fits when they asked for a kind of medicine. If nothing in the CATALOGUE fits, say so in a reply. You may say what a
+  product is for, its price and whether it needs a prescription, from the CATALOGUE. A pharmacist decides which product suits the caller.
+- A pharmacy has no consultation fee: never mention one for a pharmacy.
 - Keep replies short, polite and spoken: one or two sentences, no lists, no symbols.
 - caller_area and search_area must be one of the areas listed. If the caller names a neighbourhood that is not listed, give the nearest listed area.
 - A caller who asked for the next available slot, the earliest time, "as soon as possible", or simply when they can come ("When I fit bring am come?"),
   and a caller who says "book it" when no time was ever said, wants the earliest time: once a place is known, use offer_booking
   with when earliest, not free_times. "Book it" after Sofa read out free times, with no time chosen, is also offer_booking with when earliest.
 - free_times is only for a caller who asks which times are free and has not asked to book.
+- A caller who wants to buy, get, order or reserve a medicine ("reserve it for me", "I will take the ibuprofen") gets reserve_medicine; the price is paid by
+  bank transfer to an account Talk sends, and the caller collects it at the pharmacy.
 - A caller who names a place that is not on the table ("the general hospital") is asking for it: pass their words as place, with the area, and Talk searches for it.
 - After a booking is proposed (PROPOSED), a yes is confirm_booking; a question about it (the fee, the address) is a reply from what was said, and the
   proposal stays open.
@@ -110,6 +118,8 @@ those or the caller is unsure. none for everything else, including a fever with 
 
 STEPS:
 {steps}
+CATALOGUE:
+{catalogue}
 AREAS: {areas}
 NEEDS: {needs}
 
@@ -137,23 +147,31 @@ class HealthAgent:
         pending, mem = st.get("pending") or {}, st.get("health_memory") or {}
         return pending.get("options") or mem.get("options") or ([mem["place"]] if mem.get("place") else [])
 
-    def prompt(self, st: dict) -> str:
+    @staticmethod
+    def catalogue_text(products: list[dict]) -> str:
+        return "\n".join(f"- {p['name']}: {p.get('use') or 'a pharmacy product'}; about {p['price']:,} naira a pack" + ("; needs a prescription" if p.get("prescription") else "")
+                         for p in products) or "(no pharmacy catalogue could be read)"
+
+    def prompt(self, st: dict, catalogue: str = "") -> str:
         pending = st.get("pending") or {}
         proposed = "none"
         if pending.get("step") == "confirm" and pending.get("place"):
             proposed = f"a visit at {pending['place']['n']} ({pending.get('question', '')[-200:]})"
+        elif pending.get("step") == "order_confirm":
+            proposed = f"a medicine order ({pending.get('question', '')[-200:]})"
         elif pending.get("step") == "cancel_confirm":
             proposed = f"cancelling a visit ({pending.get('question', '')[-200:]})"
         log_lines = "\n".join(f"{who.upper()}: {text}" for who, text in (st.get("log") or [])[-16:]) or "(the call has just started)"
         steps = "\n".join(f"- {name}: {what}" for name, what in ACTIONS.items())
-        return PROMPT.format(steps=steps, areas=", ".join(AREAS), needs=", ".join(gazetteer.NEED_CHOICES), log=log_lines, options=numbered(self.options_of(st)),
+        return PROMPT.format(steps=steps, catalogue=catalogue, areas=", ".join(AREAS), needs=", ".join(gazetteer.NEED_CHOICES), log=log_lines, options=numbered(self.options_of(st)),
                              proposed=proposed, question=pending.get("question", "none")[-300:] if pending else "none")
 
     async def decide(self, gw, transcript: str) -> Decision | None:
         """The model's decision for this turn, or None when it gave no usable one (the rules then answer)."""
         started = time.perf_counter()
         try:
-            got, _raw = await gw.svc.llm.extract(Decision, self.prompt(gw.st), transcript, json_schema=SCHEMA)
+            gw.catalogue_text = self.catalogue_text(await self.desk.catalogue(gw))     # what the pharmacies keep, from their own systems
+            got, _raw = await gw.svc.llm.extract(Decision, self.prompt(gw.st, gw.catalogue_text), transcript, json_schema=SCHEMA)
         except Exception as exc:   # the model not answering must never cost the caller a reply
             log.warning("the agent decision failed: %s", exc)
             return None
@@ -164,7 +182,7 @@ class HealthAgent:
         got.need = got.need if got.need in gazetteer.NEED_CHOICES else None
         got.when = self.grounded_when(gw.st, transcript, got.when)
         gw.note("decided", action=got.action, urgency=got.urgency or "none", area=got.caller_area or got.search_area, place=got.place, when=got.when,
-                medicine=got.medicine, model=getattr(gw.svc.llm, "model", ""), ms=int((time.perf_counter() - started) * 1000))
+                medicine=", ".join(got.medicines) or None, model=getattr(gw.svc.llm, "model", ""), ms=int((time.perf_counter() - started) * 1000))
         return got
 
     # ---- the guard rails --------------------------------------------------------------------------------------
@@ -184,9 +202,10 @@ class HealthAgent:
         return when.strip()[:120] if words and words <= self.caller_words(st, transcript) else None
 
     @staticmethod
-    def grounded_reply(st: dict, transcript: str, text: str) -> bool:
-        """A reply the model wrote may only carry facts already said in this call: every figure and every named place must appear in what was said."""
-        said = " ".join(t for _, t in (st.get("log") or [])) + " " + transcript + " " + ((st.get("pending") or {}).get("question") or "")
+    def grounded_reply(st: dict, transcript: str, text: str, catalogue: str = "") -> bool:
+        """A reply the model wrote may only carry facts already said in this call or written in the pharmacies' catalogue: every figure and every named
+        place must appear in one of them."""
+        said = " ".join(t for _, t in (st.get("log") or [])) + " " + transcript + " " + ((st.get("pending") or {}).get("question") or "") + " " + catalogue
         for figure in re.findall(r"\d[\d,.:]*", text):
             if figure.rstrip(".,:") not in said:
                 return False
@@ -206,7 +225,8 @@ class HealthAgent:
             place = options[int(place) - 1]["n"]
         need = d.need or ("pharmacy" if d.kind == "pharmacy" else None)
         return Request(need=need, area=d.search_area or d.caller_area, origin=d.caller_area, facility=place or None,
-                       when=None if d.when == "earliest" else d.when, earliest=d.when == "earliest", drug=d.medicine, utterance=transcript[:300])
+                       when=None if d.when == "earliest" else d.when, earliest=d.when == "earliest", drug=d.medicines[0] if d.medicines else None,
+                       utterance=transcript[:300])
 
     async def act(self, gw, d: Decision, transcript: str):
         """Take the step the model chose. None hands the turn to the rules."""
@@ -225,10 +245,20 @@ class HealthAgent:
             return await gw.give_up("asked_for_person", transcript) if st.get("domain") else gw.reply("call_no_human", action="asked_for_person")
         if a == "reply":
             text = (d.reply or "").strip()
-            if not text or len(text) > 400 or not self.grounded_reply(st, transcript, text):
+            if not text or len(text) > 400 or not self.grounded_reply(st, transcript, text, getattr(gw, "catalogue_text", "")):
                 gw.note("guard", stopped="a reply with a fact that was not said in this call")
                 return None
             return gw.reply("health_say", action="agent_reply", answer=text)     # spoken as written; an open question stays open
+        if a == "reserve_medicine":
+            st["pending"] = None
+            desk.recall(gw, "health.drug_availability", req)
+            product = (d.medicines[0] if d.medicines else None) or req.drug or (desk.memory(gw).get("req") or {}).get("drug")
+            if not product:
+                return None
+            place = (d.place or "").strip() or (desk.memory(gw).get("pharmacy") or {}).get("n")
+            return await desk.offer_order(gw, req, product, place if place and not place.isdigit() else None)
+        if a == "confirm_booking" and pending.get("step") == "order_confirm":
+            return await desk.resolve_pending(gw, pending, transcript, agreed=True)
         if a == "confirm_booking":
             if pending.get("step") != "confirm":     # nothing was proposed: start the booking, so that Sofa proposes a time first
                 return await desk.start(gw, "health.book_appointment", req)
@@ -245,6 +275,9 @@ class HealthAgent:
                 "ask_care_team": "health.ask_the_centre"}[a]
         if a == "find_places" and d.kind == "pharmacy":
             req.need = "pharmacy"
+        if a == "medicine" and len(d.medicines) > 1:     # a kind of medicine: the products that fit, at the nearest pharmacy that has them
+            self.desk.recall(gw, "health.drug_availability", req)
+            return await desk.drug_options(gw, req, d.medicines)
         if a == "medicine" and not req.drug:
             req.drug = gazetteer.match_drug(transcript)
         if a == "ask_care_team":

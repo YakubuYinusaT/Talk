@@ -33,8 +33,8 @@ def booked(happ):
 
 
 def test_a_travel_question_after_a_medicine_answer_gets_the_nearest_pharmacy_and_the_trip(client, decides):
-    decides["Where can I get paracetamol?"] = {"action": "reply", "urgency": "none", "reply": "Which area are you in, please?", "medicine": "paracetamol"}
-    decides["I am at Palmgrove, how long will it take me to get there?"] = {"action": "medicine", "urgency": "none", "medicine": "paracetamol", "caller_area": "Maryland"}
+    decides["Where can I get paracetamol?"] = {"action": "reply", "urgency": "none", "reply": "Which area are you in, please?", "medicines": ["Paracetamol 500 milligram tablets"]}
+    decides["I am at Palmgrove, how long will it take me to get there?"] = {"action": "medicine", "urgency": "none", "medicines": ["Paracetamol 500 milligram tablets"], "caller_area": "Maryland"}
     replies = call(client, ["Where can I get paracetamol?", "I am at Palmgrove, how long will it take me to get there?"])
     assert replies[1] == "Which area are you in, please?"
     assert "Paracetamol" in replies[2] and "From Maryland," in replies[2] and "away by road" in replies[2]
@@ -77,7 +77,7 @@ def test_a_day_the_caller_never_said_is_not_used(client, happ, decides):
 
 
 def test_an_area_outside_the_list_is_not_used(client, decides):
-    decides["Which pharmacy has paracetamol? I am at Palmgrove."] = {"action": "medicine", "urgency": "none", "medicine": "paracetamol", "caller_area": "Palmgrove"}
+    decides["Which pharmacy has paracetamol? I am at Palmgrove."] = {"action": "medicine", "urgency": "none", "medicines": ["Paracetamol 500 milligram tablets"], "caller_area": "Palmgrove"}
     replies = call(client, ["Which pharmacy has paracetamol? I am at Palmgrove."])
     assert "Palmgrove" not in replies[1] and "Paracetamol" in replies[1]
 
@@ -89,7 +89,7 @@ def test_with_no_usable_decision_the_rules_answer(client, decides):
 
 def test_the_model_sees_the_whole_call_both_sides(client, decides):
     decides["Where can I get paracetamol?"] = {"action": "reply", "urgency": "none", "reply": "Which area are you in, please?"}
-    decides["Surulere."] = {"action": "medicine", "urgency": "none", "medicine": "paracetamol", "caller_area": "Surulere"}
+    decides["Surulere."] = {"action": "medicine", "urgency": "none", "medicines": ["Paracetamol 500 milligram tablets"], "caller_area": "Surulere"}
     call(client, ["Where can I get paracetamol?", "Surulere."])
     last = decides["_prompts"][-1]
     assert "CALLER: Where can I get paracetamol?" in last and "SOFA: Which area are you in, please?" in last
@@ -105,3 +105,24 @@ def test_a_question_about_a_proposal_leaves_it_open(client, happ, decides):
     assert "consultation fee of 8,000 naira" in replies[1] and "Would you like me to book it" in replies[2]
     assert replies[3] == "The consultation fee at Surulere Care Clinic is 8,000 naira. Shall I book it?"
     assert "Your appointment is confirmed at Surulere Care Clinic" in replies[4] and len(booked(happ)) == 1
+
+
+def test_a_medicine_is_reserved_only_after_the_caller_agrees_and_an_account_is_given(client, happ, decides):
+    lines = ["I need ibuprofen, I am in Yaba.", "Please reserve it for me.", "Yes, please."]
+    decides[lines[0]] = {"action": "medicine", "urgency": "none", "medicines": ["Ibuprofen 400 milligram tablets"], "caller_area": "Yaba"}
+    decides[lines[1]] = {"action": "reserve_medicine", "urgency": "none", "medicines": ["Ibuprofen 400 milligram tablets"], "caller_area": "Yaba"}
+    decides[lines[2]] = {"action": "confirm_booking", "urgency": "none"}
+    replies = call(client, lines)
+    assert "Shall I reserve it for you?" in replies[2] and "650 naira" in replies[2]
+    assert "set aside for you at Everwell Pharmacy Yaba" in replies[3] and "The total is 650 naira" in replies[3] and "account number" in replies[3]
+    desk = client.get("/synthetic/everwell/").text
+    assert "Ibuprofen 400 milligram tablets" in desk and "Awaiting payment" in desk and 'id="orders"' in desk
+
+
+def test_a_kind_of_medicine_lists_the_products_that_fit(client, decides):
+    line = "I need a pain reliever, I am in Yaba."
+    decides[line] = {"action": "medicine", "urgency": "none", "caller_area": "Yaba",
+                     "medicines": ["Paracetamol 500 milligram tablets", "Ibuprofen 400 milligram tablets"]}
+    reply = call(client, [line])[1]
+    assert "Paracetamol 500 milligram tablets at about 400 naira" in reply and "Ibuprofen 400 milligram tablets at about 650 naira" in reply
+    assert "A pharmacist there can tell you which one suits you." in reply

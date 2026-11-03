@@ -481,3 +481,12 @@ label.check { display: flex; font-weight: 400; font-size: var(--fs-md); }
 /* ---- motion and print ------------------------------------------------------------------------------------------------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; } .skeleton { background: var(--surface-2); } }
 @media print { .site-header, .site-footer, .skip-link, .toasts { display: none; } body { background: #fff; color: #000; } }
+
+/* the test transfer for a simulated payment */
+.msg .pay { margin-top: var(--space-2); }
+.msg .pay.done { background: var(--success); border-color: var(--success); color: #fff; }
+
+/* chatting on WhatsApp first, the web chat as a backup */
+.wa-block { display: grid; gap: var(--space-1); justify-items: start; margin-bottom: var(--space-4); }
+.btn.wa { background: #1f8f4e; border-color: #1f8f4e; color: #fff; }
+.wa-or { margin-top: var(--space-2); }

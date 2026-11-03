@@ -33,6 +33,11 @@ TOOLS = [
      "params": [{"name": "facility_id", "prompt": "Which place?", "required": True}, {"name": "start", "prompt": "When?", "required": True}]},
     {"name": "cancel", "description": "Cancel the caller's own appointment", "risk": "service", "params": [{"name": "code", "prompt": "The booking code", "required": True}]},
     {"name": "upcoming", "description": "The caller's own coming appointments with this provider", "params": []},
+    {"name": "catalogue", "description": "The products this provider's pharmacies keep: what each is for, the price of a pack, and whether it needs a prescription",
+     "params": []},
+    {"name": "reserve", "description": "Set packs of a medicine aside at one of this provider's pharmacies for the caller to collect", "risk": "service",
+     "params": [{"name": "facility_id", "prompt": "Which pharmacy?", "required": True}, {"name": "drug", "prompt": "Which medicine?", "required": True},
+                {"name": "qty", "prompt": "How many packs?", "required": False}]},
     {"name": "stock", "description": "Which of this provider's pharmacies have a medicine in stock",
      "params": [{"name": "drug", "prompt": "Which medicine?", "required": True}]},
     {"name": "knowledge", "description": "Entries from this provider's own patient guide that answer a question",
@@ -122,6 +127,7 @@ class Provider:
 
     def call(self, tool: str, args: dict, ctx: dict) -> dict:
         handler = {"search": self.search, "slots": self.slots, "book": self.book, "cancel": self.cancel, "upcoming": self.upcoming, "stock": self.stock,
+                   "catalogue": self.catalogue, "reserve": self.reserve,
                    "knowledge": self.knowledge, "visit_status": self.visit_status, "request": self.request, "request_status": self.request_status,
                    "confirm": self.confirm, "emergency": self.emergency, "emergency_hold": self.emergency_hold}.get(tool)
         if not handler:
@@ -259,6 +265,24 @@ class Provider:
             return refuse("not_found")
         return ok(request=found)
 
+    def reserve(self, args: dict, ctx: dict) -> dict:
+        """Sets packs aside for the caller (known here only by a reference) and shows the order on the pharmacy's front desk."""
+        caller = str(ctx.get("caller_id") or "")
+        f = self.store.by_id.get(str(args.get("facility_id") or ""))
+        drug = self.store.find_drug(str(args.get("drug") or ""))
+        if not caller or f is None or f.kind != "pharmacy" or drug is None:
+            return refuse("bad_request")
+        order = self.store.reserve(f, drug, caller, int(args.get("qty") or 1))
+        if order is None:
+            return refuse("out_of_stock")
+        return ok(order={**order, "pharmacy": f.name, "address": f.address})
+
+    def catalogue(self, args: dict, ctx: dict) -> dict:
+        """Every product this provider's pharmacies keep, as its own catalogue describes it. A provider with no pharmacy keeps none."""
+        if not any(f.kind == "pharmacy" for f in self.store.facilities):
+            return ok(products=[])
+        return ok(products=[{"name": d.name, "use": data.USES.get(d.id, ""), "price": d.price, "prescription": d.prescription} for d in data.DRUGS])
+
     def stock(self, args: dict, ctx: dict) -> dict:
         now = self.store.clock()
         drug = self.store.find_drug(str(args.get("drug") or ""))
@@ -270,7 +294,7 @@ class Provider:
         out = []
         for f, km in ranked[:6]:
             row = self.describe(f, now, km)
-            row["qty"], row["price"] = data.stock_level(f.id, drug.id), drug.price
+            row["qty"], row["price"] = self.store.packs_left(f.id, drug.id), drug.price
             out.append(row)
         return ok(drug={"id": drug.id, "name": drug.name, "price": drug.price, "prescription": drug.prescription}, pharmacies=out)
 
@@ -278,11 +302,13 @@ class Provider:
 # ---- the web service ------------------------------------------------------------------------------------------
 
 
-def create_provider_app(network: data.Network, secret: str, store: HospitalStore | None = None, desk_key: str = "", owner=None, extras=None, texts=None) -> FastAPI:
+def create_provider_app(network: data.Network, secret: str, store: HospitalStore | None = None, desk_key: str = "", owner=None, extras=None, texts=None,
+                        payments=None) -> FastAPI:
     """`desk_key` lets the front desk confirm and mark visits and answer requests from its page (open the page with ?key=...). Empty: the page only shows the book.
     A hospital made in the onboarding wizard also passes `owner`, a function that says whether a request comes from the visitor it was made for (its page is then shown
     to that visitor alone, with staff access, and to anyone who brings the desk key), and `extras`, a function that gives the page what is particular to that hospital.
-    `texts` is Talk's record of the texts it sent, asked by reference (sofa/services/notify.py), so the desk can show each one and whether it arrived."""
+    `texts` is Talk's record of the texts it sent, asked by reference (sofa/services/notify.py), so the desk can show each one and whether it arrived, and
+    `payments` is Talk's record of what each patient was asked to pay by transfer (sofa/services/payments.py), so the desk can show whether it has arrived."""
     store = store or HospitalStore(facilities=network.facilities)
     provider = Provider(network, store)
     app = FastAPI(title=network.name, docs_url=None, redoc_url=None, openapi_url=None)
@@ -344,7 +370,7 @@ def create_provider_app(network: data.Network, secret: str, store: HospitalStore
         if owner and not allowed:   # a hospital made for one visitor is not shown to anybody else
             raise HTTPException(status_code=404)
         page = desk_page.render(provider.network, store, desk_key, key, staff=allowed,
-                                extras={"embedded": embed == "1", **(extras(request) if extras else {})}, texts=texts)
+                                extras={"embedded": embed == "1", **(extras(request) if extras else {})}, texts=texts, payments=payments)
         return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
     return app
