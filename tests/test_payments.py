@@ -16,7 +16,7 @@ BOOK = ["I am in Surulere. When is the next available slot at a clinic?", "The f
 def test_a_booking_with_a_fee_gives_an_account_number_to_pay_into(client, hdb):
     replies = call(client, BOOK)
     assert "Your appointment is confirmed at Surulere Care Clinic" in replies[3]
-    assert "The consultation fee is 8,000 naira" in replies[3] and "Talk Test Bank, account number 99" in replies[3]
+    assert "The consultation fee is 8,000 naira" in replies[3] and "Talk Wallet, account number 99" in replies[3]
     row = hdb.scalars(select(Payment)).one()
     assert row.amount == 8000 and row.status == "pending" and row.channel == "simulated" and row.code.startswith("APT-")
     text = hdb.scalars(select(Notification).where(Notification.template == "health_pay")).one()
@@ -60,7 +60,7 @@ def test_the_try_page_can_make_the_test_transfer_for_its_own_payment_only(client
 def test_a_live_paystack_key_is_never_used(client, happ, hdb):
     happ.state.svc.settings.paystack_secret_key = "sk_live_should_never_be_used"
     replies = call(client, BOOK)
-    assert "Talk Test Bank" in replies[3]
+    assert "Talk Wallet" in replies[3]
     assert hdb.scalars(select(Payment)).one().channel == "simulated"
 
 

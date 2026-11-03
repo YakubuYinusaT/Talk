@@ -97,6 +97,7 @@ class Settings(BaseSettings):
     whatsapp_reminder_template: str = "appointment_reminder"   # the approved template for a reminder outside WhatsApp's 24-hour window; empty = SMS then
     whatsapp_template_language: str = "en"
     paystack_secret_key: str = ""    # with it, a caller pays by transfer into a Paystack account made for that payment; without it, the account is simulated
+    payment_account_label: str = "Talk Wallet"   # what the caller hears and reads as the name of the account to pay into
     payment_hours: int = 8           # how long an account number for one payment stays valid (Paystack allows 15 minutes to 8 hours)
     compose_replies: bool = True     # on WhatsApp and chat, Sofa writes each reply in its own words from the systems' facts (health_agent.py); calls keep fixed wording
     dialogue_agent: bool = True      # the model reads the whole call and decides each step (sofa/orchestrator/adapters/health_agent.py); off = the rules decide

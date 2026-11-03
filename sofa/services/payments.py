@@ -57,13 +57,14 @@ async def request_transfer(db: Session, settings, *, amount: int, purpose: str, 
                 log.error("Paystack gave no transfer account for %s: HTTP %s %s", reference, resp.status_code, (resp.json().get("message") if resp.content else ""))
                 return None
             row.channel, row.account_number = "paystack", str(data["account_number"])
-            row.bank = str((data.get("bank") or {}).get("name") or "the bank")
-            row.account_name = str(data.get("account_name") or "Paystack")
+            row.bank = settings.payment_account_label or str((data.get("bank") or {}).get("name") or "the bank")
+            given = str(data.get("account_name") or "")
+            row.account_name = given if given and "PAYSTACK" not in given.upper() else f"Talk for {place}"[:160]     # not Paystack's generic checkout name
         except (httpx.HTTPError, ValueError) as exc:
             log.error("Paystack could not be reached for %s: %s", reference, type(exc).__name__)
             return None
     else:
-        row.channel, row.bank = "simulated", SIMULATED_BANK
+        row.channel, row.bank = "simulated", settings.payment_account_label or SIMULATED_BANK
         row.account_number = simulated_account(reference, settings.at_callback_secret)
         row.account_name = f"Talk for {place}"[:160]
     db.add(row)
