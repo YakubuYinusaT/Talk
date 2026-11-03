@@ -1,4 +1,7 @@
-# Talk: Helping you access essential services, from the phone people already have.
+# We have figured out a way to build AI that works where there's no internet, and we are currently deploying it to help people in remote area connect to essential resources both in digital and non digital forms
+
+
+# Talk: Helping you access essential services, from the phone people already have and a call they already know how to make.
 
 [![tests](https://github.com/YakubuYinusaT/Talk-for-Meta/actions/workflows/tests.yml/badge.svg)](https://github.com/YakubuYinusaT/Talk-for-Meta/actions/workflows/tests.yml)
 
