@@ -18,7 +18,7 @@ from types import SimpleNamespace
 from sqlalchemy import select
 
 from ..models import Caller, HealthAppointment, HealthRequest
-from ..services.notify import send_sms
+from ..services.notify import send_followup, send_sms
 from .when import say_day, say_time
 
 log = logging.getLogger("sofa.health")
@@ -51,7 +51,8 @@ async def announce_confirmations(svc, domain: str | None = None, now: datetime |
             if (answer or {}).get("status") != "confirmed":
                 continue
             to = adapter.demo.confirmation_phone(row.provider, person.phone) if adapter.demo else person.phone    # a visitor who agreed to it is texted on their own phone
-            note = await send_sms(db, svc, to=to, body=confirmed_text(row, now), template="health_confirmed", caller_id=person.id)
+            note = (await send_followup(db, svc, person=person, body=confirmed_text(row, now), template="health_confirmed") if to == person.phone
+                    else await send_sms(db, svc, to=to, body=confirmed_text(row, now), template="health_confirmed", caller_id=person.id))
             if note.status in ("sent", "mock_sent"):
                 row.status = "confirmed"
                 sent.append({"code": row.code, "text": note.body, "status": note.status})
@@ -105,7 +106,8 @@ async def run(svc, now: datetime | None = None) -> dict:
             start = datetime.fromisoformat(row.starts_local)
             if row.status in ("booked", "confirmed") and start > now:
                 if row.reminded_at is None and (start - now).total_seconds() <= REMIND_WITHIN_HOURS * 3600 and can_text:
-                    note = await send_sms(db, svc, to=person.phone, body=reminder_text(row, now), template="health_reminder", caller_id=person.id)
+                    values = [row.sms_name, f"{start:%A} {start.day} {start:%B}", say_time(start), row.code]     # the approved template's four values
+                    note = await send_followup(db, svc, person=person, body=reminder_text(row, now), template="health_reminder", wa_template=("reminder", values))
                     if note.status in ("sent", "mock_sent"):
                         row.reminded_at, done["reminders"] = stamp, done["reminders"] + 1
                 continue
@@ -125,7 +127,7 @@ async def run(svc, now: datetime | None = None) -> dict:
             if row.status in ("attended", "no_show") and row.followed_up_at is None and can_text:
                 body = attended_text(row, now) if row.status == "attended" else missed_text(row, now)
                 template = "health_thanks" if row.status == "attended" else "health_missed"
-                note = await send_sms(db, svc, to=person.phone, body=body, template=template, caller_id=person.id)
+                note = await send_followup(db, svc, person=person, body=body, template=template)
                 if note.status in ("sent", "mock_sent"):
                     row.followed_up_at = stamp
                     done["thanked" if row.status == "attended" else "chased"] += 1
@@ -141,7 +143,7 @@ async def run(svc, now: datetime | None = None) -> dict:
             ctx = SimpleNamespace(db=db, svc=svc, person=person, call=None)
             found = ((await adapter.provider_call(ctx, spec, "request_status", {"code": req.code})) or {}).get("request") or {}
             if found.get("status") == "answered" and found.get("reply"):
-                note = await send_sms(db, svc, to=person.phone, body=reply_text(req, found["reply"]), template="health_request_reply", caller_id=person.id)
+                note = await send_followup(db, svc, person=person, body=reply_text(req, found["reply"]), template="health_request_reply")
                 if note.status in ("sent", "mock_sent"):
                     req.status, req.texted_at, done["replied"] = "answered", stamp, done["replied"] + 1
         db.commit()

@@ -62,3 +62,28 @@ def test_a_live_paystack_key_is_never_used(client, happ, hdb):
     replies = call(client, BOOK)
     assert "Talk Test Bank" in replies[3]
     assert hdb.scalars(select(Payment)).one().channel == "simulated"
+
+
+def test_the_text_carries_a_one_time_link_and_the_checkout_takes_the_payment(client, hdb):
+    replies = call(client, BOOK)
+    assert "one-time link" in replies[3]
+    row = hdb.scalars(select(Payment)).one()
+    text = hdb.scalars(select(Notification).where(Notification.template == "health_pay")).one()
+    assert f"/pay/{row.reference}" in text.body
+    page = client.get(f"/pay/{row.reference}")
+    assert page.status_code == 200 and "Pay &#8358;8,000" in page.text and "No real money moves" in page.text
+    client.post(f"/pay/{row.reference}")
+    hdb.expire_all()
+    assert hdb.scalars(select(Payment)).one().status == "paid"
+    assert "Paid ✓" in client.get(f"/pay/{row.reference}").text
+
+
+def test_a_payment_through_the_paystack_link_is_matched_to_its_booking(client, happ, hdb):
+    call(client, BOOK)
+    row = hdb.scalars(select(Payment)).one()
+    happ.state.svc.settings.paystack_secret_key = "sk_test_x"
+    body = json.dumps({"event": "charge.success", "data": {"reference": row.reference + "-LINK"}}).encode()
+    good = hmac.new(b"sk_test_x", body, hashlib.sha512).hexdigest()
+    assert client.post("/payments/paystack", content=body, headers={"x-paystack-signature": good}).status_code == 200
+    hdb.expire_all()
+    assert hdb.scalars(select(Payment)).one().status == "paid"

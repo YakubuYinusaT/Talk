@@ -88,11 +88,14 @@ class Settings(BaseSettings):
     try_session_minutes: int = 30    # a typed conversation is forgotten after this long
     # WhatsApp, through Meta's WhatsApp Cloud API: people chat with Sofa there, and send photos of a medicine pack or a prescription. The webhook is
     # /whatsapp/webhook; the verify token answers Meta's check of it, and the app secret proves each message came from Meta.
+    vision_model: str = "muse-spark-1.3"   # reads photos of prescriptions and medicine packs sent on WhatsApp: Muse Spark 1.3 takes images as well as text
     whatsapp_phone_number_id: str = ""
     whatsapp_access_token: str = ""
     whatsapp_verify_token: str = ""
     whatsapp_app_secret: str = ""
     whatsapp_business_account_id: str = ""
+    whatsapp_reminder_template: str = "appointment_reminder"   # the approved template for a reminder outside WhatsApp's 24-hour window; empty = SMS then
+    whatsapp_template_language: str = "en"
     paystack_secret_key: str = ""    # with it, a caller pays by transfer into a Paystack account made for that payment; without it, the account is simulated
     payment_hours: int = 8           # how long an account number for one payment stays valid (Paystack allows 15 minutes to 8 hours)
     dialogue_agent: bool = True      # the model reads the whole call and decides each step (sofa/orchestrator/adapters/health_agent.py); off = the rules decide

@@ -33,6 +33,21 @@ class WhatsAppClient:
             return "failed", None
         return "sent", ((resp.json().get("messages") or [{}])[0]).get("id")
 
+    async def send_template(self, to: str, name: str, language: str, values: list[str]) -> tuple[str, str | None]:
+        """An approved template message, for writing to a person outside WhatsApp's 24-hour window. The values fill {{1}}, {{2}} and so on, in order."""
+        payload = {"messaging_product": "whatsapp", "to": to.lstrip("+"), "type": "template",
+                   "template": {"name": name, "language": {"code": language},
+                                "components": [{"type": "body", "parameters": [{"type": "text", "text": str(v)[:200]} for v in values]}]}}
+        try:
+            resp = await self.http.post(f"{GRAPH}/{self.phone_number_id}/messages", json=payload)
+        except httpx.HTTPError as exc:
+            log.error("WhatsApp could not be reached: %s", type(exc).__name__)
+            return "failed", None
+        if resp.status_code >= 300:
+            log.error("WhatsApp refused the template %s: HTTP %s %s", name, resp.status_code, (resp.json().get("error") or {}).get("message", "") if resp.content else "")
+            return "failed", None
+        return "sent", ((resp.json().get("messages") or [{}])[0]).get("id")
+
     async def media(self, media_id: str) -> tuple[bytes, str] | None:
         """A photo the person sent: its bytes and its type, or None when it could not be fetched."""
         try:

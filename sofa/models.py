@@ -98,6 +98,13 @@ class Notification(Row, Base):
     provider_message_id: Mapped[str | None] = mapped_column(String(100))
 
 
+class WhatsAppContact(Row, Base):
+    """A caller who chats with Sofa on WhatsApp, and when they last wrote: WhatsApp lets Talk write freely only within 24 hours of that."""
+    __tablename__ = "whatsapp_contacts"
+    caller_id: Mapped[uuid.UUID] = mapped_column(Uuid, unique=True, index=True)
+    last_inbound_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class Payment(Row, Base):
     """A payment Talk asked a caller to make by bank transfer, for one visit or one medicine order (sofa/services/payments.py)."""
     __tablename__ = "payments"

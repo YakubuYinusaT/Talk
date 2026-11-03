@@ -1,14 +1,17 @@
 """Chatting with Sofa on WhatsApp: Meta's check of the webhook, signed messages only, a text answered through the same front desk, a photo of a prescription
 read and answered, a message Meta sends twice answered once, texts such as the account to pay into sent on WhatsApp, and Meta's delivery reports kept."""
 
+import asyncio
 import hashlib
 import hmac
 import json
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import select
 
-from sofa.models import Notification, Payment
+from sofa.health import followups
+from sofa.models import Notification, Payment, WhatsAppContact
 from sofa.routes import whatsapp
 from sofa.routes.whatsapp import Photo
 
@@ -19,7 +22,7 @@ class FakeWhatsApp:
     phone_number_id = "123"
 
     def __init__(self):
-        self.sent, self.photos = [], {}
+        self.sent, self.photos, self.templates = [], {}, []
 
     async def send_text(self, to, body):
         self.sent.append((to, body))
@@ -27,6 +30,10 @@ class FakeWhatsApp:
 
     async def media(self, media_id):
         return self.photos.get(media_id)
+
+    async def send_template(self, to, name, language, values):
+        self.templates.append((to, name, language, list(values)))
+        return "sent", f"wamid.t{len(self.templates)}"
 
 
 @pytest.fixture
@@ -107,3 +114,42 @@ def test_delivery_reports_move_forward_only(client, wa, hdb):
     post(client, statuses=[{"id": "wamid.9", "status": "delivered"}])
     hdb.expire_all()
     assert hdb.scalars(select(Notification).where(Notification.provider_message_id == "wamid.9")).one().status == "read"
+
+
+BOOK_ANY_CLINIC = ["Hello, I would like to book an appointment, please.", "I am in Surulere.", "The second one, please.", "Tomorrow morning, please.", "Yes, please go ahead."]
+TUESDAY_MORNING = datetime(2026, 10, 27, 10, 20)     # the day before the visit booked above
+
+
+def book_on_whatsapp(client):
+    for i, line in enumerate(BOOK_ANY_CLINIC):
+        post(client, [text(line, f"r{i}")])
+
+
+def test_a_reminder_comes_on_whatsapp_within_the_24_hours(client, happ, wa):
+    book_on_whatsapp(client)
+    before = len(wa.sent)
+    asyncio.run(followups.run(happ.state.svc, TUESDAY_MORNING))
+    assert len(wa.sent) == before + 1 and "friendly reminder" in wa.sent[-1][1] and wa.templates == []
+
+
+def test_after_24_hours_the_reminder_uses_the_approved_template(client, happ, wa, hdb):
+    book_on_whatsapp(client)
+    for row in hdb.scalars(select(WhatsAppContact)):
+        row.last_inbound_at = datetime.now(timezone.utc) - timedelta(days=2)
+    hdb.commit()
+    asyncio.run(followups.run(happ.state.svc, TUESDAY_MORNING))
+    (to, name, language, values) = wa.templates[-1]
+    assert to == "+" + WA_ID and name == "appointment_reminder" and language == "en"
+    assert values[0] == "Aguda Community Health Centre" and values[1] == "Wednesday 28 October" and values[3].startswith("APT-")
+
+
+def test_without_a_template_the_late_reminder_goes_by_sms(client, happ, wa, hdb):
+    happ.state.svc.settings.whatsapp_reminder_template = ""
+    book_on_whatsapp(client)
+    for row in hdb.scalars(select(WhatsAppContact)):
+        row.last_inbound_at = datetime.now(timezone.utc) - timedelta(days=2)
+    hdb.commit()
+    asyncio.run(followups.run(happ.state.svc, TUESDAY_MORNING))
+    hdb.expire_all()
+    reminder = hdb.scalars(select(Notification).where(Notification.template == "health_reminder")).one()
+    assert reminder.channel == "sms" and wa.templates == []

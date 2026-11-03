@@ -46,11 +46,12 @@ class LLMClient:
     """Chat completions that answer in JSON. llm_provider="meta" is the Meta Model API (Muse Spark); "openai" is any hosted model behind an OpenAI-style API.
     The address inprocess://mock is the stand-in model that runs inside this process."""
 
-    def __init__(self, url: str, model: str, api_key: str = "", provider: str = "meta", reasoning_effort: str = "minimal"):
+    def __init__(self, url: str, model: str, api_key: str = "", provider: str = "meta", reasoning_effort: str = "minimal", vision_model: str = ""):
         if provider not in PROVIDERS:
             raise ValueError(f"unknown LLM_PROVIDER {provider!r} (use meta or openai)")
         self.http, self.base = http_for(url, api_key)
         self.model = model
+        self.vision_model = vision_model or model     # the model that reads photos (Muse Spark 1.3 takes images as well as text)
         self.meta = provider == "meta"
         self.reasoning_effort = reasoning_effort
         self.stats = {"answers": 0, "rejected": 0, "repaired": 0, "failed": 0}   # shown on /health, so a rising rate of bad answers is seen
@@ -99,12 +100,13 @@ class LLMClient:
         return got
 
     async def see(self, model, system: str, image: bytes, mime: str, caption: str = ""):
-        """What a photo shows, read by the model, as an instance of `model`. Returns an empty instance when it cannot be read."""
+        """What a photo shows, read by the vision model (Muse Spark 1.3 through the Meta Model API, with the image attached to the message), as an instance
+        of `model`. Returns an empty instance when it cannot be read."""
         import base64
 
         content = [{"type": "text", "text": f"CAPTION: {caption or 'none'}"},
                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{base64.b64encode(image).decode()}"}}]
-        payload = {"model": self.model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}],
+        payload = {"model": self.vision_model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}],
                    **self.schema_format("photo", model.model_json_schema())}
         if self.meta:
             payload.update(max_tokens=EXTRACT_MAX_TOKENS + META_REASONING_ROOM, reasoning_effort=self.reasoning_effort)

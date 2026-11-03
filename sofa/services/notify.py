@@ -3,7 +3,7 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Notification
+from ..models import Notification, WhatsAppContact
 
 TEST_PREFIX = "+2349990"  # numbers reserved for typed test conversations (the /try page): a text to one is recorded, never sent
 
@@ -33,6 +33,46 @@ def texts_about(session_factory, codes: set[str], limit: int = 40) -> list[dict]
             if len(found) >= limit:
                 break
     return found
+
+
+WINDOW_HOURS = 24     # WhatsApp lets a business write freely only within this long of the person's last message
+
+
+async def send_followup(db: Session, services, *, person, body: str, template: str, wa_template: tuple[str, list[str]] | None = None) -> Notification:
+    """A follow-up to a person, on the channel they use. Someone who chats with Sofa on WhatsApp gets it there: as a normal message within 24 hours of their
+    last message, and outside that only as an approved template (`wa_template`: its kind and its values); with no template, it goes by SMS."""
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import select
+
+    contact = db.scalar(select(WhatsAppContact).where(WhatsAppContact.caller_id == person.id))
+    wa = getattr(services, "whatsapp", None)
+    if contact and wa:
+        last = contact.last_inbound_at if contact.last_inbound_at.tzinfo else contact.last_inbound_at.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) - last < timedelta(hours=WINDOW_HOURS):
+            return await send_sms(db, services, to=person.phone, body=body, template=template, caller_id=person.id, channel="whatsapp")
+        name = services.settings.whatsapp_reminder_template
+        if wa_template and name:
+            note = Notification(caller_id=person.id, channel="whatsapp", template=template, to_number=person.phone, body=body)
+            db.add(note)
+            db.flush()
+            note.status, note.provider_message_id = await wa.send_template(person.phone, name, services.settings.whatsapp_template_language, wa_template[1])
+            if note.status == "sent":
+                return note
+    return await send_sms(db, services, to=person.phone, body=body, template=template, caller_id=person.id)
+
+
+def saw_on_whatsapp(db: Session, caller_id) -> None:
+    """The person wrote on WhatsApp just now: for the next 24 hours Talk may write back freely."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import select
+
+    row = db.scalar(select(WhatsAppContact).where(WhatsAppContact.caller_id == caller_id))
+    if row is None:
+        db.add(WhatsAppContact(caller_id=caller_id, last_inbound_at=datetime.now(timezone.utc)))
+    else:
+        row.last_inbound_at = datetime.now(timezone.utc)
 
 
 async def send_sms(db: Session, services, *, to: str, body: str, template: str, caller_id=None, channel: str = "sms") -> Notification:

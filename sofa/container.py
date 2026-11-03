@@ -48,7 +48,7 @@ def build_services(settings: Settings, session_factory) -> Services:
         session_factory=session_factory,
         sessions=make_store(settings.redis_url),
         asr=build_asr(settings),
-        llm=LLMClient(settings.llm_url, settings.llm_model, settings.llm_api_key, settings.llm_provider, settings.llm_reasoning_effort),
+        llm=LLMClient(settings.llm_url, settings.llm_model, settings.llm_api_key, settings.llm_provider, settings.llm_reasoning_effort, settings.vision_model),
         tts=tts,
         sms=SMSClient(settings),
         audio=AudioService(settings, tts),

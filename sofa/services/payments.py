@@ -23,6 +23,7 @@ log = logging.getLogger("sofa.payments")
 
 PAYSTACK = "https://api.paystack.co"
 SIMULATED_BANK = "Talk Test Bank"
+LINK_SUFFIX = "-LINK"     # the same payment, paid through its one-time link: Paystack needs a reference of its own for it
 
 
 def new_reference() -> str:
@@ -67,7 +68,23 @@ async def request_transfer(db: Session, settings, *, amount: int, purpose: str, 
         row.account_name = f"Talk for {place}"[:160]
     db.add(row)
     db.flush()
+    row.link = await one_time_link(settings, key, row)
     return row
+
+
+async def one_time_link(settings, key: str, row: Payment) -> str:
+    """A link the caller can open to pay the same amount by card, transfer or USSD, good for this one payment: Paystack's own checkout in test mode, or the
+    simulated checkout page on this site. Empty when Paystack gave none (the account number still works)."""
+    if not key:
+        return f"{str(settings.public_base_url).rstrip('/')}/pay/{row.reference}"
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            resp = await http.post(f"{PAYSTACK}/transaction/initialize", headers={"Authorization": f"Bearer {key}"},
+                                   json={"email": f"{row.reference.lower()}@pay.talk", "amount": row.amount * 100, "reference": row.reference + LINK_SUFFIX})
+        return str((resp.json().get("data") or {}).get("authorization_url") or "") if resp.status_code < 300 else ""
+    except (httpx.HTTPError, ValueError) as exc:
+        log.error("Paystack gave no payment link for %s: %s", row.reference, type(exc).__name__)
+        return ""
 
 
 def spaced(number: str) -> str:
@@ -76,7 +93,9 @@ def spaced(number: str) -> str:
 
 
 def mark_paid(db: Session, reference: str) -> Payment | None:
-    """The money arrived. Returns the payment when it was waiting for it, so that the caller is texted a receipt once."""
+    """The money arrived, by transfer to the account or through the one-time link. Returns the payment when it was waiting for it, so that the caller is
+    texted a receipt once."""
+    reference = reference.removesuffix(LINK_SUFFIX)
     row = db.scalar(select(Payment).where(Payment.reference == reference))
     if not row or row.status == "paid":
         return None

@@ -172,7 +172,8 @@ If the caller had said, "Please, my brother is not breathing, we are in Ikeja," 
 | Model | Job |
 |---|---|
 | Muse Voice Transcribe | It hears the caller in English, with keyword hints for places, clinics and medicines, and it reads one recording at a time. |
-| Muse Spark 1.3 | It understands the request as strict JSON, picks among the real options when the rules cannot, and words the conversation around the facts. It is used in Standard mode only, and never as a contributor model. |
+| Muse Spark 1.3 | It leads the conversation: each turn it reads the whole call and the pharmacies' catalogue and decides the next step as strict JSON, with the urgency. It also picks among the real options when the rules cannot, and words the conversation around the facts. It is used in Standard mode only, and never as a contributor model. |
+| Muse Spark 1.3, vision | It reads a photo sent on WhatsApp: whether it is a prescription or a medicine pack, and every medicine on it, from print or handwriting, with brand names and abbreviations turned into the medicines they are. The image goes to the Meta Model API attached to the message (`VISION_MODEL`), and the photo is not kept. |
 
 ## What is next
 

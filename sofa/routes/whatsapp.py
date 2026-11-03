@@ -135,6 +135,18 @@ async def conversation(svc, wa_id: str) -> str | None:
     return sid
 
 
+def remember_contact(svc, wa_id: str) -> None:
+    """This person chats on WhatsApp and wrote just now: their reminders and other follow-ups come here (sofa/services/notify.py)."""
+    from ..models import Caller
+    from ..services.notify import saw_on_whatsapp
+
+    with svc.session_factory() as db:
+        person = db.scalar(select(Caller).where(Caller.phone == f"+{wa_id}"))
+        if person:
+            saw_on_whatsapp(db, person.id)
+            db.commit()
+
+
 async def words_of(svc, message: dict) -> str | None:
     """What the person said: the text, or what their photo shows, in words the front desk reads. None for what Sofa cannot read here."""
     kind = message.get("type")
@@ -146,7 +158,8 @@ async def words_of(svc, message: dict) -> str | None:
         caption = str(image.get("caption") or "").strip()[:500]
         if got is None:
             return None
-        photo = await svc.llm.see(Photo, PHOTO_PROMPT, got[0], got[1], caption)
+        photo = await svc.llm.see(Photo, PHOTO_PROMPT, got[0], got[1], caption)     # read by Muse Spark 1.3 (VISION_MODEL), the photo itself is not kept
+        log.info("a %s photo read by %s: %d medicines", photo.kind, getattr(svc.llm, "vision_model", ""), len(photo.medicines))
         if photo.kind not in ("prescription", "medicine_pack") or not photo.medicines:
             return None
         what = "a prescription" if photo.kind == "prescription" else "a medicine pack"
@@ -169,6 +182,7 @@ async def answer(svc, message: dict) -> None:
             if sid is None:
                 await svc.whatsapp.send_text(wa_id, "Sorry, please try again a little later.")
                 return
+            remember_contact(svc, wa_id)
             result = await voice.run_text_turn(svc, sid, said)
             await svc.whatsapp.send_text(wa_id, result["reply"])
             if result.get("ended"):

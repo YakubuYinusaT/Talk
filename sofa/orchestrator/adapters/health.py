@@ -823,10 +823,15 @@ class HealthAdapter(ServiceAdapter):
             return self.words(gw, "health_pay_at_counter", amount=f"{amount:,}")
         until = (row.expires_at + timedelta(hours=1)).strftime("%H:%M")     # Lagos time
         self.note(gw, "payment", reference=row.reference, amount=amount, channel=row.channel, purpose=purpose)
-        await self.text_caller(gw, self.words(gw, "health_sms_pay", amount=f"{amount:,}", code=code, place=place, bank=row.bank, number=row.account_number,
-                                              name=row.account_name, until=until, reference=row.reference), template="health_pay")
+        link = getattr(row, "link", "")
+        body = self.words(gw, "health_sms_pay", amount=f"{amount:,}", code=code, place=place, bank=row.bank, number=row.account_number, name=row.account_name,
+                          until=until, reference=row.reference)
+        if link:
+            body += " " + self.words(gw, "health_sms_pay_link", link=link)
+        await self.text_caller(gw, body, template="health_pay")
         what = self.words(gw, "health_pay_what_visit" if purpose == "visit" else "health_pay_what_order")
-        return self.words(gw, "health_pay_transfer", what=what, amount=f"{amount:,}", bank=row.bank, number=payments.spaced(row.account_number), name=row.account_name)
+        said = self.words(gw, "health_pay_transfer", what=what, amount=f"{amount:,}", bank=row.bank, number=payments.spaced(row.account_number), name=row.account_name)
+        return f"{said} {self.words(gw, 'health_pay_link_said')}" if link else said
 
     def remember_visit(self, gw, place: dict, appt: dict) -> None:
         """Talk keeps the code, the place and the time of a visit it booked, so it can remind the patient and follow up. Nothing about why they are going."""
@@ -839,7 +844,7 @@ class HealthAdapter(ServiceAdapter):
         """Only ever to the caller's own number. True when the text was accepted, so the call says it was sent only when it was."""
         from ...services.notify import send_sms
 
-        note = await send_sms(gw.db, gw.svc, to=gw.person.phone, body=body[:300], template=template, caller_id=gw.person.id, channel=gw.st.get("channel") or "sms")
+        note = await send_sms(gw.db, gw.svc, to=gw.person.phone, body=body[:600], template=template, caller_id=gw.person.id, channel=gw.st.get("channel") or "sms")
         return note.status in ("sent", "mock_sent")
 
     # ---- cancelling --------------------------------------------------------------------------------------------------
