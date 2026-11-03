@@ -35,9 +35,11 @@ TOOLS = [
     {"name": "upcoming", "description": "The caller's own coming appointments with this provider", "params": []},
     {"name": "catalogue", "description": "The products this provider's pharmacies keep: what each is for, the price of a pack, and whether it needs a prescription",
      "params": []},
-    {"name": "reserve", "description": "Set packs of a medicine aside at one of this provider's pharmacies for the caller to collect", "risk": "service",
-     "params": [{"name": "facility_id", "prompt": "Which pharmacy?", "required": True}, {"name": "drug", "prompt": "Which medicine?", "required": True},
-                {"name": "qty", "prompt": "How many packs?", "required": False}]},
+    {"name": "reserve", "description": "Set medicines aside at one of this provider's pharmacies for the caller to collect, one or several, with how many packs of each",
+     "risk": "service", "params": [{"name": "facility_id", "prompt": "Which pharmacy?", "required": True}, {"name": "drug", "prompt": "Which medicine?", "required": False},
+                                   {"name": "qty", "prompt": "How many packs?", "required": False}, {"name": "items", "prompt": "The medicines and how many of each", "required": False}]},
+    {"name": "cancel_order", "description": "Cancel the caller's own medicine order that has not been collected", "risk": "service",
+     "params": [{"name": "code", "prompt": "The order code", "required": True}]},
     {"name": "stock", "description": "Which of this provider's pharmacies have a medicine in stock",
      "params": [{"name": "drug", "prompt": "Which medicine?", "required": True}]},
     {"name": "knowledge", "description": "Entries from this provider's own patient guide that answer a question",
@@ -127,7 +129,7 @@ class Provider:
 
     def call(self, tool: str, args: dict, ctx: dict) -> dict:
         handler = {"search": self.search, "slots": self.slots, "book": self.book, "cancel": self.cancel, "upcoming": self.upcoming, "stock": self.stock,
-                   "catalogue": self.catalogue, "reserve": self.reserve,
+                   "catalogue": self.catalogue, "reserve": self.reserve, "cancel_order": self.cancel_order,
                    "knowledge": self.knowledge, "visit_status": self.visit_status, "request": self.request, "request_status": self.request_status,
                    "confirm": self.confirm, "emergency": self.emergency, "emergency_hold": self.emergency_hold}.get(tool)
         if not handler:
@@ -269,13 +271,20 @@ class Provider:
         """Sets packs aside for the caller (known here only by a reference) and shows the order on the pharmacy's front desk."""
         caller = str(ctx.get("caller_id") or "")
         f = self.store.by_id.get(str(args.get("facility_id") or ""))
-        drug = self.store.find_drug(str(args.get("drug") or ""))
-        if not caller or f is None or f.kind != "pharmacy" or drug is None:
+        wanted = args.get("items") or [{"drug": args.get("drug"), "qty": args.get("qty") or 1}]
+        items = [(self.store.find_drug(str(i.get("drug") or "")), int(i.get("qty") or 1)) for i in wanted if isinstance(i, dict)]
+        if not caller or f is None or f.kind != "pharmacy" or not items or any(d is None for d, _ in items):
             return refuse("bad_request")
-        order = self.store.reserve(f, drug, caller, int(args.get("qty") or 1))
+        order = self.store.reserve_items(f, items, caller)
         if order is None:
             return refuse("out_of_stock")
         return ok(order={**order, "pharmacy": f.name, "address": f.address})
+
+    def cancel_order(self, args: dict, ctx: dict) -> dict:
+        caller = str(ctx.get("caller_id") or "")
+        if not caller or not self.store.cancel_order(str(args.get("code") or ""), caller):
+            return refuse("not_found")
+        return ok(cancelled=True)
 
     def catalogue(self, args: dict, ctx: dict) -> dict:
         """Every product this provider's pharmacies keep, as its own catalogue describes it. A provider with no pharmacy keeps none."""

@@ -56,6 +56,7 @@ class Decision(BaseModel):
     place: str | None = None
     when: str | None = None
     medicines: list[str] | None = []      # the model sometimes writes null for none
+    items: list[dict] | None = []         # for reserve_medicine: each product and how many packs
     question: str | None = None
     reply: str | None = None
 
@@ -80,6 +81,9 @@ SCHEMA = {
         "place": _text("the number of an option on the table such as 1 or 2, a place as Sofa named it, or the caller's own words for a place, such as the general hospital"),
         "when": _text("a day or time in the caller's own words, or the word earliest when they want the first free time"),
         "medicines": {"type": "array", "items": {"type": "string"}, "description": "for medicine: the CATALOGUE products, by their exact names, that fit what the caller asked for; several when they asked for a kind of medicine"},
+        "items": {"anyOf": [{"type": "array", "items": {"type": "object", "additionalProperties": False, "required": ["name", "qty"],
+                                                         "properties": {"name": {"type": "string"}, "qty": {"type": "integer"}}}}, {"type": "null"}],
+                  "description": "for reserve_medicine: every CATALOGUE product to set aside and how many packs, including the items of an OPEN ORDER the caller adds to"},
         "question": _text("for ask_care_team: the caller's question"),
         "reply": _text("for reply: what Sofa says, one or two short spoken sentences"),
     },
@@ -111,8 +115,10 @@ How to decide:
 - free_times is only for a caller who asks which times are free and has not asked to book.
 - A no to Sofa's offer to set a pack aside ("No, I just need paracetamol", "I will buy it myself") means the caller will go and buy it: give a short,
   warm reply that names the pharmacy already given; do not repeat the whole answer.
-- A caller who wants to buy, get, order or reserve a medicine ("reserve it for me", "I will take the ibuprofen") gets reserve_medicine; the price is paid by
-  bank transfer to an account Talk sends, and the caller collects it at the pharmacy.
+- A caller who wants to buy, get, order or reserve a medicine ("reserve it for me", "I will take the ibuprofen") gets reserve_medicine, with every product
+  and how many packs in items ("two paracetamol" is qty 2). The price is paid by bank transfer to an account Talk sends, and the caller collects it.
+- When the caller adds to the OPEN ORDER ("add it to the paracetamol", "and two more of those", "what is the total?"), give reserve_medicine with every item:
+  the ones already in the open order and the new ones, with their quantities, so they become one order with one total and one payment.
 - A caller who names a place that is not on the table ("the general hospital") is asking for it: pass their words as place, with the area, and Talk searches for it.
 - After a booking is proposed (PROPOSED), a yes is confirm_booking; a question about it (the fee, the address) is a reply from what was said, and the
   proposal stays open.
@@ -131,6 +137,7 @@ NEEDS: {needs}
 THE CALL SO FAR (oldest first):
 {log}
 OPTIONS ON THE TABLE: {options}
+OPEN ORDER: {order}
 PROPOSED: {proposed}
 OPEN QUESTION: {question}"""
 
@@ -190,6 +197,14 @@ class HealthAgent:
         return "\n".join(f"- {p['name']}: {p.get('use') or 'a pharmacy product'}; about {p['price']:,} naira a pack" + ("; needs a prescription" if p.get("prescription") else "")
                          for p in products) or "(no pharmacy catalogue could be read)"
 
+    @staticmethod
+    def open_order(st: dict) -> str:
+        order = (st.get("health_memory") or {}).get("order")
+        if not order:
+            return "none"
+        items = ", ".join(f"{order.get('qty', {}).get(n, 1)} x {n}" for n in order.get("items", []))
+        return f"{order['code']} at {order['place']['n']}: {items}; {order.get('total', 0):,} naira, not paid yet"
+
     def prompt(self, st: dict, catalogue: str = "") -> str:
         pending = st.get("pending") or {}
         proposed = "none"
@@ -202,7 +217,7 @@ class HealthAgent:
         log_lines = "\n".join(f"{who.upper()}: {text}" for who, text in (st.get("log") or [])[-16:]) or "(the call has just started)"
         steps = "\n".join(f"- {name}: {what}" for name, what in ACTIONS.items())
         return PROMPT.format(steps=steps, catalogue=catalogue, areas=", ".join(AREAS), needs=", ".join(gazetteer.NEED_CHOICES), log=log_lines, options=numbered(self.options_of(st)),
-                             proposed=proposed, question=pending.get("question", "none")[-300:] if pending else "none")
+                             proposed=proposed, order=self.open_order(st), question=pending.get("question", "none")[-300:] if pending else "none")
 
     async def decide(self, gw, transcript: str) -> Decision | None:
         """The model's decision for this turn, or None when it gave no usable one (the rules then answer)."""
@@ -331,11 +346,12 @@ class HealthAgent:
         if a == "reserve_medicine":
             st["pending"] = None
             desk.recall(gw, "health.drug_availability", req)
+            basket = [(str(i.get("name") or ""), int(i.get("qty") or 1)) for i in (d.items or []) if isinstance(i, dict) and i.get("name")]
             product = ((d.medicines or [None])[0]) or req.drug or (desk.memory(gw).get("req") or {}).get("drug")
-            if not product:
+            if not basket and not product:
                 return None
             place = (d.place or "").strip() or (desk.memory(gw).get("pharmacy") or {}).get("n")
-            return await desk.offer_order(gw, req, product, place if place and not place.isdigit() else None)
+            return await desk.offer_order(gw, req, basket or product, place if place and not place.isdigit() else None)
         if a == "confirm_booking" and pending.get("step") == "order_confirm":
             return await desk.resolve_pending(gw, pending, transcript, agreed=True)
         if a == "confirm_booking":

@@ -944,49 +944,96 @@ class HealthAdapter(ServiceAdapter):
                          place=place, product=drug["name"], total=drug["price"], prescription=bool(drug["prescription"]))
         return self.facts_only(offer, f"{text} Talk can set a pack aside at {best['name']} for {drug['price']:,} naira, for the caller to pay for and collect.")
 
-    async def offer_order(self, gw, req: Request, product: str, pharmacy: str | None = None) -> Outcome:
-        """Propose setting a medicine aside for the caller to collect: the pharmacy nearest them that has it (or the one they named), and the price. Nothing is
-        reserved until the caller agrees."""
+    @staticmethod
+    def packs(qty: int, name: str) -> str:
+        words = {1: "one pack", 2: "two packs", 3: "three packs", 4: "four packs", 5: "five packs"}
+        return f"{words.get(qty, f'{qty} packs')} of {name}"
+
+    async def offer_order(self, gw, req: Request, product: str | list, pharmacy: str | None = None) -> Outcome:
+        """Propose setting medicines aside for the caller to collect: one or several, with how many packs of each, at the pharmacy nearest them that has them
+        all (or the one they named), with the price of each and the total. An earlier unpaid order of this call that the caller adds to becomes part of this
+        one. Nothing is reserved until the caller agrees."""
+        wanted_items = [(product, 1)] if isinstance(product, str) else [(str(n), max(1, int(q or 1))) for n, q in product]
         near = req.area or req.origin
         if not near and not pharmacy:
-            req.drug = product
+            req.drug = wanted_items[0][0]
             return self.ask(gw, "where", "health.drug_availability", req, self.words(gw, "health_ask_area"))
-        args = {"drug": product, **({"lat": AREAS[near].lat, "lon": AREAS[near].lon} if near else {})}
-        answered = await self.ask_all(gw, "stock", args, "pharmacies")
-        if not answered:
+        coords = {"lat": AREAS[near].lat, "lon": AREAS[near].lon} if near else {}
+        answers = await asyncio.gather(*(self.ask_all(gw, "stock", {"drug": name, **coords}, "pharmacies") for name, _ in wanted_items))
+        if not any(answers):
             return self.nothing_reachable(gw)
-        drug = next((a["drug"] for _, a in answered if a.get("drug")), None)
-        found = [{**p, "d": s.domain} for s, a in answered for p in a.get("pharmacies", []) if p.get("qty", 0) > 0]
-        if not drug or not found:
-            return self.say(gw, self.words(gw, "health_drug_none", drug=drug["name"] if drug else product), "health_order_none")
-        wanted = set(tokens(pharmacy or "")) - {"pharmacy", "the", "at", "everwell", "one"}
-        named = [p for p in found if wanted and wanted <= set(tokens(p["name"]))]
+        items, shelves = [], {}
+        for (name, qty), answered in zip(wanted_items, answers):
+            drug = next((a["drug"] for _, a in answered if a.get("drug")), None)
+            if not drug:
+                continue
+            items.append({"name": drug["name"], "qty": qty, "price": drug["price"], "prescription": bool(drug["prescription"])})
+            for s, a in answered:
+                for p in a.get("pharmacies", []):
+                    if p.get("qty", 0) >= qty:
+                        shelves.setdefault(p["name"], {**p, "d": s.domain, "has": set()})["has"].add(drug["name"])
+        if not items or not shelves:
+            return self.say(gw, self.words(gw, "health_drug_none", drug=wanted_items[0][0]), "health_order_none")
+        found = list(shelves.values())
+        earlier = self.memory(gw).get("order") or {}
+        hint = pharmacy or (earlier.get("place") or {}).get("n")
+        named = set(tokens(hint or "")) - {"pharmacy", "the", "at", "everwell", "one"}
         if req.origin:
             self.with_travel(gw, found, req.origin)
-        best = sorted(named or found, key=lambda p: (self.how_far(p), p["name"]))[0]
+        best = sorted(found, key=lambda p: (-len(p["has"]), not (named and named <= set(tokens(p["name"]))), self.how_far(p), p["name"]))[0]
+        missing = [i["name"] for i in items if i["name"] not in best["has"]]
+        items = [i for i in items if i["name"] in best["has"]]
         place = {"d": best["d"], "id": best["id"], "n": best["name"], "sn": best.get("sms_name") or best["name"], "a": best.get("address", "")}
-        question = self.words(gw, "health_offer_order", drug=drug["name"], pharmacy=best["name"], total=f"{drug['price']:,}")
-        return self.ask(gw, "order_confirm", "health.drug_availability", req, question, place=place, product=drug["name"], total=drug["price"],
-                        prescription=bool(drug["prescription"]))
+        total = sum(i["price"] * i["qty"] for i in items)
+        folds = (earlier.get("code") if earlier and not earlier.get("paid") and earlier.get("place", {}).get("n") == best["name"]
+                 and set(earlier.get("items", [])) <= {i["name"] for i in items} else None)
+        if len(items) == 1 and items[0]["qty"] == 1:
+            question = self.words(gw, "health_offer_order", drug=items[0]["name"], pharmacy=best["name"], total=f"{total:,}")
+        else:
+            listed = join_names([f"{self.packs(i['qty'], i['name'])} at {i['price'] * i['qty']:,} naira" for i in items], "and")
+            question = self.words(gw, "health_offer_order_many", items=listed, pharmacy=best["name"], total=f"{total:,}")
+        if missing:
+            question = self.words(gw, "health_order_missing", names=join_names(missing, "and"), pharmacy=best["name"]) + " " + question
+        if folds:     # the code read out as a person says it: "2 J R B", not "ORD-2JRB"
+            question += " " + self.words(gw, "health_order_will_replace", old=" ".join(folds.split("-")[1]))
+        return self.ask(gw, "order_confirm", "health.drug_availability", req, question, place=place, items=items, product=items[0]["name"], total=total,
+                        prescription=any(i["prescription"] for i in items), replaces=folds)
 
     async def place_order(self, gw, req: Request, pending: dict) -> Outcome:
         """The caller agreed: the pharmacy sets the pack aside, the caller is told the order code, and is asked to pay by transfer."""
         place = pending["place"]
-        answer = await self.provider_call(gw, self.spec_of(place), "reserve", {"facility_id": place["id"], "drug": pending["product"], "qty": 1})
+        items = pending.get("items") or [{"name": pending["product"], "qty": 1}]
+        answer = await self.provider_call(gw, self.spec_of(place), "reserve", {"facility_id": place["id"], "items": [{"drug": i["name"], "qty": i["qty"]} for i in items]})
         if answer is None:
             return self.nothing_reachable(gw)
         if not answer.get("ok"):
-            return self.say(gw, self.words(gw, "health_drug_none", drug=pending["product"]), "health_order_none")
+            return self.say(gw, self.words(gw, "health_drug_none", drug=items[0]["name"]), "health_order_none")
         order = answer["order"]
         code = order["code"]
-        said = self.words(gw, "health_ordered", drug=order["drug"], pharmacy=place["n"], code=" ".join(code.split("-")[1]))
+        lines = order.get("items") or [{"drug": order["drug"], "qty": 1}]
+        if len(lines) == 1 and lines[0]["qty"] == 1:
+            said = self.words(gw, "health_ordered", drug=order["drug"], pharmacy=place["n"], code=" ".join(code.split("-")[1]))
+        else:
+            listed = join_names([self.packs(l["qty"], l["drug"]) for l in lines], "and")
+            said = self.words(gw, "health_ordered_many", items=listed[:1].upper() + listed[1:], pharmacy=place["n"],
+                              code=" ".join(code.split("-")[1]))
+        old = pending.get("replaces")
+        if old:     # the earlier order of this call is part of this one now: it is cancelled, and so is its payment, so the person pays once
+            await self.provider_call(gw, self.spec_of(place), "cancel_order", {"code": old})
+            from ...services.payments import cancel_for
+
+            cancel_for(gw.db, old)
+            said += " " + self.words(gw, "health_order_replaced", old=" ".join(old.split("-")[1]))
         if order.get("prescription"):
             said += " " + self.words(gw, "health_order_prescription")
-        await self.text_caller(gw, self.words(gw, "health_sms_ordered", code=code, drug=order["drug"], pharmacy=place["sn"],
+        listed = join_names([self.packs(l["qty"], l["drug"]) for l in lines], "and")
+        await self.text_caller(gw, self.words(gw, "health_sms_ordered", code=code, drug=listed, pharmacy=place["sn"],
                                               address=place.get("a") or order.get("address", "")))
-        self.note(gw, "ordered", provider=getattr(self.spec_of(place), "label", place["d"]), place=place["n"], code=code, drug=order["drug"])
+        self.note(gw, "ordered", provider=getattr(self.spec_of(place), "label", place["d"]), place=place["n"], code=code, drug=listed)
         self.forget_offer(gw)
         pay = await self.ask_payment(gw, purpose="medicine", code=code, place=place["sn"], amount=int(order.get("total") or 0))
+        self.memory(gw)["order"] = {"code": code, "place": {"n": place["n"]}, "items": [l["drug"] for l in lines], "qty": {l["drug"]: l["qty"] for l in lines},
+                                    "total": int(order.get("total") or 0)}     # "add it to the paracetamol" folds a later order into this one
         return self.say(gw, f"{said} {pay}".strip(), "health_ordered")
 
     async def catalogue(self, gw) -> list[dict]:

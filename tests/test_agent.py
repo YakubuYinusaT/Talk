@@ -170,3 +170,23 @@ def test_a_phone_call_keeps_the_fixed_wording_so_the_caller_does_not_wait(client
     decides["written:" + line] = "Everwell Pharmacy Yaba has it."
     reply = call(client, [line])[1]
     assert "Would you like me to set a pack aside" in reply and not decides.get("_written")
+
+
+def test_several_medicines_become_one_order_with_one_total_and_an_earlier_order_is_folded_in(client, happ, decides, hdb):
+    from sofa.models import Payment
+
+    lines = ["I need paracetamol, I am in Yaba.", "Yes.", "Add ibuprofen to it, and make the paracetamol two.", "Yes."]
+    decides[lines[0]] = {"action": "medicine", "urgency": "none", "medicines": ["Paracetamol 500 milligram tablets"], "caller_area": "Yaba"}
+    decides[lines[1]] = {"action": "confirm_booking", "urgency": "none"}
+    decides[lines[2]] = {"action": "reserve_medicine", "urgency": "none", "caller_area": "Yaba",
+                         "items": [{"name": "Paracetamol 500 milligram tablets", "qty": 2}, {"name": "Ibuprofen 400 milligram tablets", "qty": 1}]}
+    decides[lines[3]] = {"action": "confirm_booking", "urgency": "none"}
+    replies = call(client, lines)
+    assert "set aside for you at Everwell Pharmacy Yaba" in replies[2]
+    assert "two packs of Paracetamol 500 milligram tablets at 800 naira and one pack of Ibuprofen 400 milligram tablets at 650 naira" in replies[3]
+    assert "1,450 naira in all" in replies[3] and "replace your earlier order" in replies[3]
+    assert "Two packs of Paracetamol" in replies[4] and "is now part of this one" in replies[4] and "The total is 1,450 naira" in replies[4]
+    hdb.expire_all()
+    assert sorted(p.status for p in hdb.scalars(select(Payment))) == ["cancelled", "pending"]
+    desk = client.get("/synthetic/everwell/").text
+    assert "2 × Paracetamol 500 milligram tablets · 1 × Ibuprofen 400 milligram tablets" in desk and "Cancelled" in desk

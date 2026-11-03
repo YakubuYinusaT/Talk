@@ -104,6 +104,12 @@ def mark_paid(db: Session, reference: str) -> Payment | None:
     return row
 
 
+def cancel_for(db: Session, code: str) -> None:
+    """An order was folded into a new one: its payment, if not made yet, is not wanted any more."""
+    for row in db.scalars(select(Payment).where(Payment.code == code, Payment.status == "pending")):
+        row.status = "cancelled"
+
+
 def of_codes(session_factory, codes: set[str]) -> dict[str, dict]:
     """The latest payment for each booking or order code, for a front desk: how much, and whether it has arrived."""
     if not codes:

@@ -52,6 +52,8 @@ class HospitalStore:
             CREATE TABLE IF NOT EXISTS orders (
                 code TEXT PRIMARY KEY, facility_id TEXT NOT NULL, drug_id TEXT NOT NULL, qty INTEGER NOT NULL, price INTEGER NOT NULL,
                 caller_ref TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'reserved', created TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS order_lines (code TEXT NOT NULL, drug_id TEXT NOT NULL, qty INTEGER NOT NULL, price INTEGER NOT NULL);
+            CREATE INDEX IF NOT EXISTS order_lines_code ON order_lines (code);
             CREATE TABLE IF NOT EXISTS emergency_holds (
                 code TEXT PRIMARY KEY, facility_id TEXT NOT NULL, caller_ref TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'held', created TEXT NOT NULL,
                 expires TEXT NOT NULL);
@@ -253,20 +255,41 @@ class HospitalStore:
 
     def packs_left(self, facility_id: str, drug_id: str) -> int:
         """The packs on the shelf less the ones set aside for callers who have not collected them yet."""
-        held = self.db.execute("SELECT COALESCE(SUM(qty), 0) FROM orders WHERE facility_id = ? AND drug_id = ? AND status = 'reserved'", (facility_id, drug_id)).fetchone()[0]
+        held = self.db.execute("SELECT COALESCE(SUM(l.qty), 0) FROM order_lines l JOIN orders o ON o.code = l.code "
+                               "WHERE o.facility_id = ? AND l.drug_id = ? AND o.status = 'reserved'", (facility_id, drug_id)).fetchone()[0]
         return max(0, data.stock_level(facility_id, drug_id) - held)
 
     def reserve(self, f: data.Facility, drug: data.Drug, caller_ref: str, qty: int = 1) -> dict | None:
-        """Set packs aside for a caller to collect. None when there are not enough left."""
-        qty = max(1, min(int(qty), 5))
+        """Set packs of one medicine aside for a caller to collect. None when there are not enough left."""
+        return self.reserve_items(f, [(drug, qty)], caller_ref)
+
+    def reserve_items(self, f: data.Facility, items: list[tuple[data.Drug, int]], caller_ref: str) -> dict | None:
+        """Set several medicines aside under one order code, each with how many packs. None when any of them has not enough left."""
+        items = [(d, max(1, min(int(q), 10))) for d, q in items][:8]
+        if not items:
+            return None
         with self.lock:
-            if self.packs_left(f.id, drug.id) < qty:
+            if any(self.packs_left(f.id, d.id) < q for d, q in items):
                 return None
             code = "ORD-" + "".join(secrets.choice(CODE_ALPHABET) for _ in range(4))
+            total = sum(d.price * q for d, q in items)
             self.db.execute("INSERT INTO orders (code, facility_id, drug_id, qty, price, caller_ref, created) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                            (code, f.id, drug.id, qty, drug.price * qty, caller_ref, self.clock().isoformat()))
+                            (code, f.id, items[0][0].id, sum(q for _, q in items), total, caller_ref, self.clock().isoformat()))
+            self.db.executemany("INSERT INTO order_lines (code, drug_id, qty, price) VALUES (?, ?, ?, ?)", [(code, d.id, q, d.price * q) for d, q in items])
             self.db.commit()
-        return {"code": code, "facility_id": f.id, "drug": drug.name, "qty": qty, "total": drug.price * qty, "prescription": drug.prescription}
+        lines = [{"drug": d.name, "qty": q, "price": d.price * q, "prescription": d.prescription} for d, q in items]
+        return {"code": code, "facility_id": f.id, "items": lines, "drug": items[0][0].name, "qty": sum(q for _, q in items), "total": total,
+                "prescription": any(d.prescription for d, _ in items)}
+
+    def cancel_order(self, code: str, caller_ref: str) -> bool:
+        """The caller's own order, not yet collected, is cancelled and its packs go back on the shelf."""
+        with self.lock:
+            done = self.db.execute("UPDATE orders SET status = 'cancelled' WHERE code = ? AND caller_ref = ? AND status = 'reserved'", (code, caller_ref)).rowcount
+            self.db.commit()
+        return bool(done)
+
+    def order_lines(self, code: str) -> list[sqlite3.Row]:
+        return self.db.execute("SELECT * FROM order_lines WHERE code = ?", (code,)).fetchall()
 
     def orders(self, limit: int = 30) -> list[sqlite3.Row]:
         return self.db.execute("SELECT * FROM orders ORDER BY created DESC LIMIT ?", (limit,)).fetchall()

@@ -171,8 +171,12 @@ def orders_of(store: HospitalStore, now: datetime, paid: dict) -> list[dict]:
     found = []
     for r in store.orders():
         f, d, at = store.by_id.get(r["facility_id"]), names.get(r["drug_id"]), datetime.fromisoformat(r["created"])
-        found.append({"code": r["code"], "pharmacy": f.name if f else r["facility_id"], "drug": d.name if d else r["drug_id"], "qty": r["qty"], "total": r["price"],
-                      "prescription": bool(d and d.prescription), "status": r["status"], "time": f"{at:%H:%M}", "age": age_words(at, now), "pay": paid.get(r["code"])})
+        # what was ordered is called "what", not "items": a template would read "items" as the dictionary's own method
+        lines = [(names.get(l["drug_id"]), l["qty"]) for l in store.order_lines(r["code"])] or [(d, r["qty"])]
+        items = " · ".join(f"{q} × {x.name if x else r['drug_id']}" for x, q in lines)
+        found.append({"code": r["code"], "pharmacy": f.name if f else r["facility_id"], "what": items, "total": r["price"],
+                      "prescription": any(x and x.prescription for x, _ in lines), "status": r["status"], "time": f"{at:%H:%M}", "age": age_words(at, now),
+                      "pay": paid.get(r["code"])})
     return found
 
 
