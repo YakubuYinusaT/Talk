@@ -100,14 +100,14 @@ class Notification(Row, Base):
 
 class WhatsAppContact(Row, Base):
     """A caller who chats with Sofa on WhatsApp, and when they last wrote: WhatsApp lets Talk write freely only within 24 hours of that."""
-    __tablename__ = "whatsapp_contacts"
+    __tablename__ = "wa_contacts"
     caller_id: Mapped[uuid.UUID] = mapped_column(Uuid, unique=True, index=True)
     last_inbound_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class Payment(Row, Base):
     """A payment Talk asked a caller to make by bank transfer, for one visit or one medicine order (sofa/services/payments.py)."""
-    __tablename__ = "payments"
+    __tablename__ = "health_payments"     # not "payments": an older database on the live server already has a table of that name
     reference: Mapped[str] = mapped_column(String(40), unique=True, index=True)
     purpose: Mapped[str] = mapped_column(String(20))                    # visit | medicine
     code: Mapped[str] = mapped_column(String(20), index=True)           # the booking or order code the payment is for
