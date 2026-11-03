@@ -14,6 +14,7 @@ The feature is guarded because every turn costs a model call: JSON only, at most
 messages in one conversation, a conversation that expires, and a cap on everything at once. Nothing it sends back holds a secret or a phone number.
 """
 
+import asyncio
 import base64
 import logging
 import re
@@ -24,7 +25,7 @@ import uuid
 from collections import deque
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from ..onboarding import visitor as who
 from ..web import ui
@@ -276,8 +277,38 @@ async def speak(request: Request, _=Depends(enabled)):
         return refuse(400, "The audio could not be read.")
     if not (audio.startswith(b"RIFF") and audio[8:12] == b"WAVE") and not audio.startswith(b"MOCK["):
         return refuse(415, "Send the speech as a WAV file.")
+    if body.get("stream"):     # the page shows each step as it happens, then the reply
+        return StreamingResponse(live_turn(request, session, audio), media_type="application/x-ndjson",
+                                 headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
     out = await guarded(request, session, lambda: voice.run_spoken_turn(svc, session, audio))
     if isinstance(out, JSONResponse):
         return out
     result_audio = [path_of(u) for u in (out.pop("_audio", None) or [])]
     return out | {"audio": result_audio}
+
+
+async def live_turn(request: Request, session: str, audio: bytes):
+    """One line of JSON for each step of the turn as it happens (sofa/progress.py), then the reply itself, or the reason there is none."""
+    import json
+
+    from .. import progress
+
+    svc = request.app.state.svc
+    queue: asyncio.Queue = asyncio.Queue()
+    token = progress.listening.set(queue)
+    task = asyncio.create_task(guarded(request, session, lambda: voice.run_spoken_turn(svc, session, audio)))   # the turn carries the queue with it
+    progress.listening.reset(token)
+    while not task.done() or not queue.empty():
+        try:
+            event = await asyncio.wait_for(queue.get(), timeout=0.2)
+        except asyncio.TimeoutError:
+            continue
+        if "text" in event:
+            event["text"] = ui.scrub(str(event["text"]))[:200]
+        yield json.dumps(event) + "\n"
+    out = task.result()
+    if isinstance(out, JSONResponse):
+        yield json.dumps({"error": json.loads(out.body).get("error", "Something went wrong. Please try again.")}) + "\n"
+        return
+    result_audio = [path_of(u) for u in (out.pop("_audio", None) or [])]
+    yield json.dumps({"done": out | {"audio": result_audio}}) + "\n"

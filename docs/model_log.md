@@ -146,6 +146,14 @@ Each pharmacy system now publishes its catalogue (product, what it is for, price
 
 Muse Spark 1.3 also reads photos sent on WhatsApp, with the image attached to the message on the Meta Model API. On a printed test prescription it returned both medicines exactly as written, with the hospital and the date, in 4.5 seconds. On a handwriting-style prescription with abbreviations ("Tab Coartem 80/480 1 bd x3/7", "Tab PCM 1g tds", "Syr Vit C 5mls od"), Muse Spark 1.3 and Muse Wonder 1.0 both read all three medicines in about 8 seconds and turned Coartem into artemether-lumefantrine and PCM into paracetamol; Muse Spark 1.3 also kept the form (tablets, syrup), so it is the one Talk uses. The medicines then go into the conversation like typed words. The photo itself is not kept, and the model is told to leave out a patient's name and number. Meta's model list has no separate model for reading text in images: SAM 3.1 outlines objects and Muse Image makes pictures, so the chat model's vision is the right tool here.
 
+## Entry 19. Sofa writes its own replies
+
+After a step, the reply was a fixed sentence with the facts filled in, and the next question was chosen by code ("Which area are you in?", "Would you like me to set a pack aside?"). It was accurate, but it sounded scripted, and it often closed the conversation with "Is there anything else?" instead of moving it on.
+
+On WhatsApp and in the web chat, Muse Spark 1.3 now gets Sofa's role and job as a system prompt, the whole conversation and the facts the systems returned for that step, and writes the reply and its own next question. With the live model on 3 November, after "I need a pain reliever, I am in Yaba" it wrote "I found pain relievers near you in Yaba… Which one should I set aside for you to pay and collect?", and for the grandmother's call "Sorry about the fever, I hope your grandchild feels better soon. I can book you at Ikorodu Greenfield General Hospital…".
+
+The written reply is checked against the step's facts only. A test showed why: a made-up price of 250 naira for paracetamol passed while the check also accepted the whole medicine catalogue, because another product costs 250 naira. Writing the reply costs a second model call, so a turn on WhatsApp takes about 4.5 to 7.5 seconds instead of 2 to 4; phone calls keep the fixed wording for that reason. Booking confirmations, payment details and emergency instructions are always said word for word.
+
 ## Open improvements, starting with the most valuable
 
 1. Realtime transcription over Meta's WebSocket while the caller speaks, at `wss://api.meta.ai/v1/asr/realtime`, so that the words are ready when the caller stops. We expect it to save about 2.5 seconds on every turn compared with reading a finished recording.

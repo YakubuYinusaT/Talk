@@ -85,6 +85,9 @@ SCHEMA = {
     },
 }
 
+COMPOSED_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["reply"],
+                   "properties": {"reply": {"type": "string", "description": "what Sofa says next, with one question that moves things forward"}}}
+
 PROMPT = """AGENT. You are Sofa, the voice assistant of Talk, answering a phone call in Lagos, Nigeria. Callers speak English, Nigerian English or Pidgin. You help them
 reach health care: find a clinic or a pharmacy, check a medicine, book or cancel a visit, or ask a care team a question. Read the whole conversation below and
 decide the ONE next step. Answer with JSON only, with every field present.
@@ -106,6 +109,8 @@ How to decide:
   and a caller who says "book it" when no time was ever said, wants the earliest time: once a place is known, use offer_booking
   with when earliest, not free_times. "Book it" after Sofa read out free times, with no time chosen, is also offer_booking with when earliest.
 - free_times is only for a caller who asks which times are free and has not asked to book.
+- A no to Sofa's offer to set a pack aside ("No, I just need paracetamol", "I will buy it myself") means the caller will go and buy it: give a short,
+  warm reply that names the pharmacy already given; do not repeat the whole answer.
 - A caller who wants to buy, get, order or reserve a medicine ("reserve it for me", "I will take the ibuprofen") gets reserve_medicine; the price is paid by
   bank transfer to an account Talk sends, and the caller collects it at the pharmacy.
 - A caller who names a place that is not on the table ("the general hospital") is asking for it: pass their words as place, with the area, and Talk searches for it.
@@ -128,6 +133,39 @@ THE CALL SO FAR (oldest first):
 OPTIONS ON THE TABLE: {options}
 PROPOSED: {proposed}
 OPEN QUESTION: {question}"""
+
+
+SOFA = """REPLY_AS_SOFA. You are Sofa, the AI assistant that Talk built for healthcare access and coordination in Lagos, Nigeria. People reach you by phone call,
+WhatsApp or chat, often from a basic phone, to find care, check medicines, book or cancel a visit at a clinic, reserve a medicine at a pharmacy, pay for it, or
+get help in an emergency. Your job is to understand what each person needs, use the clinics' and pharmacies' own systems to get it done, and move the
+conversation forward until it is done, like a kind and capable front-desk person who knows Lagos.
+
+Talk's systems have just taken a step for this person. The FACTS below are what they returned: they are true and exact. Write what you say next.
+- Use the FACTS for every name, price, time, distance, code and account number, exactly as written. Never add a fact that is not in the FACTS or the call.
+- Keep what the person needs from the FACTS and leave out what does not help them now. Do not read out long lists: two or three options at most.
+- End by moving things forward with ONE question that fits this moment: what you still need to know (for example where they are), or the next thing
+  you can do for them (for example setting a medicine aside so they can pay and collect it, or booking the visit). WAITING FOR says what Talk is
+  waiting for, if anything: your question must ask for exactly that.
+- Never give medical advice, a diagnosis or a dose. A pharmacist or a clinician decides what suits the person.
+- Speak simply and warmly, in short sentences that sound natural when read aloud. No lists, no symbols, no markdown.
+Answer with JSON only: {{"reply": "..."}}
+
+THE CALL SO FAR (oldest first):
+{log}
+WAITING FOR: {waiting}
+FACTS (from the systems, exact):
+{facts}"""
+
+WAITING = {"order_confirm": "the person's yes or no to setting the medicine aside for them to pay for and collect",
+           "confirm": "the person's yes or no to the visit proposed in the FACTS", "cancel_confirm": "the person's yes or no to cancelling the visit",
+           "choose": "which of the places in the FACTS the person wants", "offer_book": "whether the person wants to book a visit at one of the places",
+           "when": "the day and time the person would like", "from": "where the person will travel from", "where": "the detail the FACTS ask for",
+           "follow": "nothing in particular: ask the most useful next question"}
+WORD_FOR_WORD = ("health_booked", "health_ordered", "health_cancelled", "health_emergency", "health_ambulance", "health_where_dropped", "health_urgent_signs")
+
+
+class Composed(BaseModel):
+    reply: str = ""
 
 
 def numbered(options: list[dict]) -> str:
@@ -202,17 +240,58 @@ class HealthAgent:
         return when.strip()[:120] if words and words <= self.caller_words(st, transcript) else None
 
     @staticmethod
-    def grounded_reply(st: dict, transcript: str, text: str, catalogue: str = "") -> bool:
-        """A reply the model wrote may only carry facts already said in this call or written in the pharmacies' catalogue: every figure and every named
-        place must appear in one of them."""
+    def ungrounded(st: dict, transcript: str, text: str, catalogue: str = "") -> str | None:
+        """The first figure or named place in a reply the model wrote that was neither said in this call nor given by the systems, or None when there is none."""
         said = " ".join(t for _, t in (st.get("log") or [])) + " " + transcript + " " + ((st.get("pending") or {}).get("question") or "") + " " + catalogue
+        plain = said.replace(",", "")
         for figure in re.findall(r"\d[\d,.:]*", text):
-            if figure.rstrip(".,:") not in said:
-                return False
+            figure = figure.rstrip(".,:")
+            if figure not in said and figure.replace(",", "") not in plain:
+                return figure
         for place in re.findall(rf"((?:[A-Z][\w']*\s){{1,5}}{WORDS_FOR_PLACES})", text):
             if place.strip() not in said:
-                return False
-        return True
+                return place.strip()
+        return None
+
+    @classmethod
+    def grounded_reply(cls, st: dict, transcript: str, text: str, catalogue: str = "") -> bool:
+        """A reply the model wrote may only carry facts already said in this call or given by the systems: every figure and every named place."""
+        return cls.ungrounded(st, transcript, text, catalogue) is None
+
+    # ---- writing the reply ---------------------------------------------------------------------------------
+
+    async def compose(self, gw, transcript: str, out):
+        """Sofa says it in its own words: the model gets its role, the whole call and the facts of this step, and writes the reply and the next question. This
+        is for WhatsApp, the chat and the call on the website (which shows each step as it happens); a phone call keeps Talk's fixed wording, which saves a
+        second model call while the caller waits on the line. A confirmation, a payment and an emergency instruction stay word for word; a reply that brings
+        in a fact the systems did not give is not used."""
+        phone_call = getattr(gw, "voiced", False) and not gw.st.get("typed")     # the call on the website is a typed session that is voiced
+        if not gw.svc.settings.compose_replies or phone_call or out is None or out.end_call or out.action.split("|")[0].startswith(WORD_FOR_WORD) or not out.text.strip():
+            return out
+        pending = gw.st.get("pending") or {}
+        log_lines = "\n".join(f"{who.upper()}: {text}" for who, text in (gw.st.get("log") or [])[-12:]) + f"\nCALLER: {transcript}"
+        facts = out.extra.get("facts_only") or out.text      # the facts alone: the next question is Sofa's own
+        system = SOFA.format(log=log_lines, waiting=WAITING.get(pending.get("step"), "nothing in particular: ask the most useful next question"), facts=facts)
+        started = time.perf_counter()
+        from ... import progress
+
+        progress.tell("writing")
+        try:
+            got, _raw = await gw.svc.llm.extract(Composed, system, transcript, json_schema=COMPOSED_SCHEMA)
+        except Exception as exc:
+            log.warning("the reply could not be written: %s", exc)
+            return out
+        text = (got.reply or "").strip()
+        stray = self.ungrounded(gw.st, transcript, text, facts) if text else None     # this step's facts and the call only: a price from elsewhere in the
+                                                                                         # catalogue that happens to match is still a wrong price here
+        if not text or len(text) > 900 or stray:
+            gw.note("guard", stopped="a written reply with a fact the systems did not give", fact=(stray or "")[:80], said=text[:400])
+            return out
+        gw.note("composed", model=getattr(gw.svc.llm, "model", ""), ms=int((time.perf_counter() - started) * 1000))
+        if pending:
+            pending["question"] = text[-300:]    # the open question is now the one Sofa really asked
+        out.text, out.extra = text, {**out.extra, "facts_reply": out.extra.get("reference")}
+        return out
 
     # ---- taking the step -----------------------------------------------------------------------------------
 

@@ -11,6 +11,7 @@ import asyncio
 import logging
 import time
 
+from .. import progress
 from sqlalchemy.orm import Session
 
 from ..dialogue import templates
@@ -39,6 +40,7 @@ class CallManager:
     def note(self, step: str, **data) -> None:
         """Add a step to this turn's trace, with the time since the turn began."""
         self.trace.append({"step": step, "at_ms": int((time.perf_counter() - self.started) * 1000), **data})
+        progress.tell(step, **data)     # a page watching this turn live sees the step as it happens
 
     # ---- reply construction ----------------------------------------------------------------------
 
@@ -231,6 +233,8 @@ class CallManager:
             self.note("urgency", level=heard.level, source=heard.source, hits=list(heard.hits))
             return health.danger_check(self, transcript)
         out = await health.agent.act(self, decided, transcript)
+        if out is not None and decided.action not in ("reply", "goodbye", "person", "other"):
+            out = await health.agent.compose(self, transcript, out)     # Sofa says the step's facts in its own words, with its own next question
         if out is not None:
             st["low_conf"] = st["unknown_streak"] = st["lost_streak"] = 0
             if decided.action not in ("other", "goodbye", "person"):

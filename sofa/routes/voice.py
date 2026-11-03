@@ -20,6 +20,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy import func, select
 
+from .. import progress
 from .. import hardening, voicexml
 from ..audio import fetch_recording, to_16k_mono, wav_rms
 from ..dialogue.outcome import Outcome, daypart, new_state
@@ -284,6 +285,7 @@ async def run_spoken_turn(svc, session_id: str, audio: bytes) -> dict:
         if wav_rms(wav) < svc.settings.silence_rms:   # nothing was said, only the room
             return None
         t = time.perf_counter()
+        progress.tell("hearing")
         result = await svc.asr.transcribe(wav, LANG)
         lat["asr"] = int((time.perf_counter() - t) * 1000)
         return Heard(result.text, result.confidence, result.model)
@@ -319,6 +321,7 @@ async def _run_turn(svc, session_id: str, turn_id: uuid.UUID, recording_url: str
         db.add(turn)
         db.commit()  # the turn's first write is saved now, so the database is not locked for the seconds it takes to fetch, hear, understand and speak
         mgr = CallManager(db, svc, st, call, person, turn_id, started=t0)
+        mgr.voiced = voiced     # a phone call keeps Talk's fixed wording, so the caller is not kept waiting for a second model call
         try:
             if not st.get("typed") and time.time() - st.get("t0", time.time()) > svc.settings.max_call_seconds:  # the longest a call may run
                 outcome = Outcome(render("call_time_limit", {}), "call_time_limit", True, "time_limit")
@@ -344,6 +347,7 @@ async def _run_turn(svc, session_id: str, turn_id: uuid.UUID, recording_url: str
         prompts: list = []
         reply_path = None
         if voiced:
+            progress.tell("voicing")
             t = time.perf_counter()
             if not person.consent_recorded_at and recording_url:
                 notice = render("consent", {})

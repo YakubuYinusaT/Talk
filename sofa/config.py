@@ -98,6 +98,7 @@ class Settings(BaseSettings):
     whatsapp_template_language: str = "en"
     paystack_secret_key: str = ""    # with it, a caller pays by transfer into a Paystack account made for that payment; without it, the account is simulated
     payment_hours: int = 8           # how long an account number for one payment stays valid (Paystack allows 15 minutes to 8 hours)
+    compose_replies: bool = True     # on WhatsApp and chat, Sofa writes each reply in its own words from the systems' facts (health_agent.py); calls keep fixed wording
     dialogue_agent: bool = True      # the model reads the whole call and decides each step (sofa/orchestrator/adapters/health_agent.py); off = the rules decide
     caller_memory_days: int = 90     # Sofa remembers a caller's area and last clinic for this long after their last call; 0 = remembers nothing between calls
 

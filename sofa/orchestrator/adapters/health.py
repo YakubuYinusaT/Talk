@@ -494,6 +494,12 @@ class HealthAdapter(ServiceAdapter):
         key = ("health_ask_emergency_area" if emergency else QUESTIONS[tool_id]) + ("_again" if req.tries else "")
         return self.ask(gw, "where", tool_id, req, self.words(gw, key))
 
+    @staticmethod
+    def facts_only(out: Outcome, facts: str) -> Outcome:
+        """What the model is given to write its own reply from: the facts, without the question Talk would add if the model could not write one."""
+        out.extra["facts_only"] = facts
+        return out
+
     def say(self, gw, text: str, action: str) -> Outcome:
         gw.st["pending"] = None
         return gw.reply("health_answer", action=action, answer=text)
@@ -640,8 +646,13 @@ class HealthAdapter(ServiceAdapter):
     # ---- which place ---------------------------------------------------------------------------------
 
     @staticmethod
-    def in_area_first(found: list[dict], area: str | None) -> list[dict]:
-        """A place named by its kind in an area ("the general hospital", from Ikorodu) is the one in that area, when there is one."""
+    def in_area_first(found: list[dict], area: str | None, query: str | None = None) -> list[dict]:
+        """The place the caller named. A place whose full name was said is that place alone, whatever near-matches other providers sent back ("Ikorodu
+        Greenfield General Hospital", not the Greenfield clinic too); a place named by its kind in an area ("the general hospital", from Ikorodu) is the one in
+        that area, when there is one."""
+        exact = [f for f in found if query and " ".join(tokens(f["name"])) == " ".join(tokens(query))]
+        if exact:
+            return exact
         same = [f for f in found if area and f.get("area") == area]
         return same or found
 
@@ -665,7 +676,7 @@ class HealthAdapter(ServiceAdapter):
             req.tries = max(req.tries, 1)   # an answer to the question was already counted when it came in: one miss is one try, not two
             return None, self.ask_where(gw, tool_id, req)
         req.tries = 0    # the question about the place is settled: the tries that were used up asking for it must not count against the next question
-        found = self.in_area_first(found, req.area if query else None)
+        found = self.in_area_first(found, req.area if query else None, query)
         options = self.compact(found[:MAX_OPTIONS])
         if len(options) == 1:
             return options[0], None
@@ -726,7 +737,7 @@ class HealthAdapter(ServiceAdapter):
             req.tries = max(req.tries, 1)   # an answer to the question was already counted when it came in: one miss is one try, not two
             return self.ask_where(gw, "health.book_appointment", req)
         req.tries = 0    # asking for the area is over: its tries must not count against the question that asks which clinic, or the one that asks when
-        found = self.in_area_first(found, req.area if query else None)
+        found = self.in_area_first(found, req.area if query else None, query)
         options = self.compact(found[:MAX_OPTIONS])
         if len(options) == 1:
             return await self.book_at(gw, req, options[0])
@@ -907,7 +918,8 @@ class HealthAdapter(ServiceAdapter):
             req.tries = max(req.tries, 1)   # an answer to the question was already counted when it came in: one miss is one try, not two
             req.drug = None
             return self.ask_where(gw, "health.drug_availability", req)
-        pharmacies = sorted((p for _, a in answered for p in a.get("pharmacies", [])), key=lambda p: (p["km"] is None, p["km"] if p["km"] is not None else 0, not p["open_now"], p["name"]))
+        pharmacies = sorted(({**p, "d": s.domain} for s, a in answered for p in a.get("pharmacies", [])),
+                            key=lambda p: (p["km"] is None, p["km"] if p["km"] is not None else 0, not p["open_now"], p["name"]))
         if not pharmacies:
             return self.say(gw, self.words(gw, "health_drug_none", drug=drug["name"]), "health_drug_none")
         if req.origin:     # the caller said where they are: the nearest by road first, and how long the trip takes
@@ -921,7 +933,16 @@ class HealthAdapter(ServiceAdapter):
         night = next((p for p in pharmacies if p.get("all_day")), None)
         if night and night not in pharmacies[:2]:
             text += " " + self.words(gw, "health_drug_night", pharmacy=night["name"])
-        return self.say(gw, text, "health_drug")
+        self.remember(gw, req, "health.drug_availability")
+        # The conversation goes on. Sofa writes its own next question from the facts (health_agent.compose); the sentence added here is only said when the
+        # model cannot write one.
+        if not (req.origin or req.area):
+            return self.facts_only(self.ask(gw, "follow", "health.drug_availability", req, f"{text} {self.words(gw, 'health_drug_ask_where')}"), text)
+        best = pharmacies[0]     # an offer to set a pack aside at the nearest one, which a yes takes up at once
+        place = {"d": best["d"], "id": best["id"], "n": best["name"], "sn": best.get("sms_name") or best["name"], "a": best.get("address", "")}
+        offer = self.ask(gw, "order_confirm", "health.drug_availability", req, f"{text} {self.words(gw, 'health_drug_offer_reserve', pharmacy=best['name'])}",
+                         place=place, product=drug["name"], total=drug["price"], prescription=bool(drug["prescription"]))
+        return self.facts_only(offer, f"{text} Talk can set a pack aside at {best['name']} for {drug['price']:,} naira, for the caller to pay for and collect.")
 
     async def offer_order(self, gw, req: Request, product: str, pharmacy: str | None = None) -> Outcome:
         """Propose setting a medicine aside for the caller to collect: the pharmacy nearest them that has it (or the one they named), and the price. Nothing is
@@ -1022,7 +1043,8 @@ class HealthAdapter(ServiceAdapter):
         text += " " + self.words(gw, "health_drug_pharmacist")
         self.remember(gw, req, "health.drug_availability")
         self.memory(gw)["pharmacy"] = {"n": best["name"], "items": [d.id for d in best["items"]]}
-        return self.say(gw, text, "health_drug_options")
+        return self.facts_only(self.ask(gw, "follow", "health.drug_availability", req, f"{text} {self.words(gw, 'health_drug_which_reserve')}"),
+                               f"{text} Talk can set any one of them aside for the caller to pay for and collect.")
 
     # ---- the caller's answers ------------------------------------------------------------------------------------------
 
@@ -1212,6 +1234,10 @@ class HealthAdapter(ServiceAdapter):
             st["pending"] = None
             req.when = transcript.strip()[:120]
             return await self.offer_slot(gw, req, place, found)
+
+        if step == "follow":     # an open question the model reads with the whole call in view (health_agent.py): the rules leave it to the next request
+            st["pending"] = None
+            return None
 
         if step == "order_confirm":     # "Shall I reserve it for you?"
             st["pending"] = None

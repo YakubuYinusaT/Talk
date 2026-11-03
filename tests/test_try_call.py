@@ -77,3 +77,26 @@ def test_a_spoken_turn_counts_towards_the_same_limit_as_a_typed_one(client, happ
     session = open_call(client)["session"]
     assert client.post("/try/speak", json={"session": session, "audio": spoken("Hello, do you have amoxicillin in stock, please?")}).status_code == 200
     assert client.post("/try/turn", json={"session": session, "text": "Thank you."}).status_code == 429
+
+
+def test_a_call_from_the_website_streams_each_step_then_the_reply(client):
+    import json
+
+    session = client.post("/try/start", json={"mode": "call"}).json()["session"]
+    got = client.post("/try/speak", json={"session": session, "audio": spoken("Which pharmacy in Surulere has paracetamol?"), "stream": True})
+    assert got.status_code == 200 and got.headers["content-type"].startswith("application/x-ndjson")
+    events = [json.loads(line) for line in got.text.splitlines() if line.strip()]
+    steps = [e.get("step") for e in events if "step" in e]
+    assert steps[:2] == ["hearing", "heard"] and "voicing" in steps
+    assert events[1]["text"] == "Which pharmacy in Surulere has paracetamol?"
+    done = events[-1]["done"]
+    assert "Everwell Pharmacy Surulere" in done["reply"] and done["audio"]
+    assert all("phone" not in e and "caller" not in e for e in events[:-1])
+
+
+def test_a_streamed_call_that_is_refused_says_why(client):
+    import json
+
+    got = client.post("/try/speak", json={"session": "no-such-session", "audio": spoken("Hello"), "stream": True})
+    events = [json.loads(line) for line in got.text.splitlines() if line.strip()]
+    assert events[-1].get("error") and "expired" in events[-1]["error"]

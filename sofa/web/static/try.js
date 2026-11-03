@@ -224,10 +224,44 @@
     };
   }
 
+  /* What the page says while Sofa works, one cue for each step the server reports as it happens. */
+  var CUES = { hearing: "Listening to you...", heard: "Heard you", decided: "Thinking...", asked: "Checking with the provider...", travel: "Working out the trip...",
+               writing: "Writing the reply...", composed: "Writing the reply...", booked: "Booking...", ordered: "Setting it aside...", payment: "Getting a payment account...",
+               held: "Holding an emergency place...", voicing: "Getting ready to speak..." };
+
+  /* A call turn whose steps arrive as they happen (one JSON object per line), then the reply. Falls back to a plain request where streaming is missing. */
+  function live(audio, onStep) {
+    if (!window.ReadableStream || !window.TextDecoder) { return post("/try/speak", { session: session, audio: audio }); }
+    return fetch("/try/speak", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session: session, audio: audio, stream: true }) })
+      .then(function (r) {
+        if (!r.ok || !r.body) { return r.json().catch(function () { return {}; }).then(function (d) { throw new Error(d.error || "Something went wrong. Please try again."); }); }
+        var reader = r.body.getReader(), decoder = new TextDecoder(), buffer = "", result = null;
+        function pump() {
+          return reader.read().then(function (part) {
+            buffer += decoder.decode(part.value || new Uint8Array(), { stream: !part.done });
+            var lines = buffer.split("\n"); buffer = lines.pop();
+            lines.forEach(function (line) {
+              if (!line.trim()) return;
+              var ev = JSON.parse(line);
+              if (ev.error) { throw new Error(ev.error); }
+              if (ev.done) { result = ev.done; } else { onStep(ev); }
+            });
+            if (part.done) { if (!result) { throw new Error("Something went wrong. Please try again."); } return result; }
+            return pump();
+          });
+        }
+        return pump();
+      });
+  }
+
   function turn(audio) {
-    lock(true); say("Talk is replying..."); mic.disabled = true;
-    post("/try/speak", { session: session, audio: audio }).then(function (d) {
-      if (d.heard) { bubble("You", d.heard); }
+    lock(true); say("Listening to you...", "working"); mic.disabled = true;
+    var shownHeard = false;
+    live(audio, function (ev) {
+      if (ev.step === "heard" && ev.text && !shownHeard) { bubble("You", ev.text); shownHeard = true; }
+      if (CUES[ev.step]) { say(ev.step === "asked" && ev.provider ? "Checking with " + ev.provider + "..." : CUES[ev.step], "working"); }
+    }).then(function (d) {
+      if (d.heard && !shownHeard) { bubble("You", d.heard); }
       bubble("Talk", d.reply, d.steps_html);
       payButton(d);
       shown(d);

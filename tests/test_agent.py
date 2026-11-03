@@ -21,6 +21,9 @@ def decides(happ):
         if system.startswith("AGENT"):
             script.setdefault("_prompts", []).append(system)
             return Decision(**script.get(transcript, {})), {}
+        if system.startswith("REPLY_AS_SOFA"):
+            script.setdefault("_written", []).append(system)
+            return model(reply=script.get("written:" + transcript, "")), {}
         return await real(model, system, transcript, alternatives, json_schema)
 
     llm.extract = extract
@@ -126,3 +129,44 @@ def test_a_kind_of_medicine_lists_the_products_that_fit(client, decides):
     reply = call(client, [line])[1]
     assert "Paracetamol 500 milligram tablets at about 400 naira" in reply and "Ibuprofen 400 milligram tablets at about 650 naira" in reply
     assert "A pharmacist there can tell you which one suits you." in reply
+
+
+
+def chat(client, lines):
+    """A typed conversation, as on the Try it page or WhatsApp: there Sofa writes its own replies."""
+    session = client.post("/try/start", json={}).json()["session"]
+    return [client.post("/try/turn", json={"session": session, "text": line}).json()["reply"] for line in lines]
+
+
+def test_sofa_writes_the_reply_from_the_facts_and_asks_its_own_question(client, decides):
+    line = "Which pharmacy has paracetamol? I am in Yaba."
+    decides[line] = {"action": "medicine", "urgency": "none", "medicines": ["Paracetamol 500 milligram tablets"], "caller_area": "Yaba"}
+    decides["written:" + line] = "Everwell Pharmacy Yaba has it for about 400 naira a pack. Shall I put one aside for you to collect?"
+    assert chat(client, [line])[0] == "Everwell Pharmacy Yaba has it for about 400 naira a pack. Shall I put one aside for you to collect?"
+    facts = decides["_written"][-1]
+    assert "FACTS" in facts and "Paracetamol 500 milligram tablets" in facts and "Would you like me to set a pack aside" not in facts   # its own question
+
+
+def test_a_written_reply_with_a_figure_the_systems_did_not_give_is_not_used(client, decides):
+    line = "Which pharmacy has paracetamol? I am in Yaba."
+    decides[line] = {"action": "medicine", "urgency": "none", "medicines": ["Paracetamol 500 milligram tablets"], "caller_area": "Yaba"}
+    decides["written:" + line] = "Everwell Pharmacy Yaba has it for 250 naira."
+    reply = chat(client, [line])[0]
+    assert "250" not in reply and "400 naira" in reply
+
+
+def test_a_booking_confirmation_is_said_word_for_word(client, decides):
+    lines = ["I am in Surulere, I want the earliest time at Surulere Care Clinic.", "Yes, please."]
+    decides[lines[0]] = {"action": "offer_booking", "urgency": "none", "caller_area": "Surulere", "place": "Surulere Care Clinic", "when": "earliest"}
+    decides[lines[1]] = {"action": "confirm_booking", "urgency": "none"}
+    decides["written:" + lines[1]] = "All done!"
+    replies = chat(client, lines)
+    assert "Your appointment is confirmed at Surulere Care Clinic" in replies[1] and "All done!" not in replies[1]
+
+
+def test_a_phone_call_keeps_the_fixed_wording_so_the_caller_does_not_wait(client, decides):
+    line = "Which pharmacy has paracetamol? I am in Yaba."
+    decides[line] = {"action": "medicine", "urgency": "none", "medicines": ["Paracetamol 500 milligram tablets"], "caller_area": "Yaba"}
+    decides["written:" + line] = "Everwell Pharmacy Yaba has it."
+    reply = call(client, [line])[1]
+    assert "Would you like me to set a pack aside" in reply and not decides.get("_written")

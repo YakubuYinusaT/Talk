@@ -223,9 +223,13 @@ def describe_trace(trace: list[dict] | None, show_words: bool = True) -> list[di
             what = "the visit" if e.get("purpose") == "visit" else "the order"
             step["text"] = f"{int(e.get('amount') or 0):,} naira for {what}, by bank transfer to an account made for this one payment, sent by text."
             step["meta"] = "Paystack" if e.get("channel") == "paystack" else "Simulated bank"
+        elif kind == "composed":
+            step["title"] = "Written"
+            step["text"] = "Sofa put the facts the systems returned into its own words, with its own next question. Every figure and place was checked against them."
+            step["meta"] = " · ".join(f for f in (pretty_model(e.get("model")) or "Language model", _ms(e.get("ms"))) if f)
         elif kind == "guard":
             step["title"] = "Guard rail"
-            step["text"] = "The model's own reply named a fact that was not said in this call, so it was not spoken and the rules answered instead."
+            step["text"] = "The model's own words named a fact the systems had not given, so they were not used and the exact facts were said instead."
             step["meta"] = "Code check · no model"
         elif kind == "meant":
             step["title"] = "Understood"

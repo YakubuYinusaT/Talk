@@ -490,3 +490,9 @@ label.check { display: flex; font-weight: 400; font-size: var(--fs-md); }
 .wa-block { display: grid; gap: var(--space-1); justify-items: start; margin-bottom: var(--space-4); }
 .btn.wa { background: #1f8f4e; border-color: #1f8f4e; color: #fff; }
 .wa-or { margin-top: var(--space-2); }
+
+/* while Sofa works on a call from the website: the step it is on, with a gentle pulse */
+.status.working { color: var(--text-2); }
+.status.working::before { content: ""; display: inline-block; width: 0.55em; height: 0.55em; margin-right: 0.5em; border-radius: 50%; background: var(--accent, #2c6bed); animation: talk-pulse 1s ease-in-out infinite; vertical-align: middle; }
+@keyframes talk-pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .status.working::before { animation: none; } }
