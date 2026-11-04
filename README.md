@@ -1,7 +1,8 @@
-# We have figured out a way to build AI that works where internet and smartphone wouldn't, and we are currently deploying it to help people in remote area connect to essential resources that are usually accessed digitally, and bringing them to a non digital forms via AI Agents. 
+## We have figured out a way to build AI that works where internet and smartphone wouldn't, and we are currently deploying it to help people in remote area connect to essential resources that are usually accessed digitally, and bringing them to a non digital forms via AI Agents. 
 
 
 Talk: Helping you access essential services, from the phone people already have and a call they already know how to make.
+visit https://talk.cohandle.app for a hosted version.
 
 [![tests](https://github.com/YakubuYinusaT/Talk-for-Meta/actions/workflows/tests.yml/badge.svg)](https://github.com/YakubuYinusaT/Talk-for-Meta/actions/workflows/tests.yml)
 
